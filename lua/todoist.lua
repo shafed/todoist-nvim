@@ -53,6 +53,9 @@ end
 -- Применяем conceal ПОСЛЕ того как буфер открыт в окне.
 -- conceallevel — оконная опция, окно должно существовать.
 local function apply_conceal(buf)
+	-- Принудительно перебить автодетект filetype
+	vim.bo[buf].filetype = "markdown"
+
 	local win = vim.fn.bufwinid(buf)
 	if win ~= -1 then
 		vim.wo[win].conceallevel = 2
