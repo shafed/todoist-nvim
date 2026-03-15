@@ -324,12 +324,31 @@ function M.restore_under_cursor(buf)
 		return
 	end
 
-	local row = vim.api.nvim_win_get_cursor(0)[1]
+	-- Убеждаемся что курсор читается из правильного окна
+	local cur_win = vim.api.nvim_get_current_win()
+	local win
+	if vim.api.nvim_win_get_buf(cur_win) == buf then
+		win = cur_win
+	else
+		win = vim.fn.bufwinid(buf)
+		if win == -1 then
+			vim.notify("Completed buffer is not visible.", vim.log.levels.WARN, { title = "todoist-nvim" })
+			return
+		end
+	end
+
+	local row = vim.api.nvim_win_get_cursor(win)[1]
 	local line = vim.api.nvim_buf_get_lines(buf, row - 1, row, false)[1] or ""
 
-	local task_id = line:match("<!%-%-%s*id:([^%s%-]+)%s*%-%->")
+	-- Более универсальный паттерн: ловит id:XXX, task_id:XXX и т.д.
+	-- %S+ вместо [^%s%-]+ — не исключает дефисы и другие символы
+	local task_id = line:match("<!%-%-[^>]*id:(%S+)%s*%-%->")
 	if not task_id then
-		vim.notify("No task ID found on this line.", vim.log.levels.WARN, { title = "todoist-nvim" })
+		vim.notify(
+			"No task ID found on this line.\nRaw: " .. line,
+			vim.log.levels.WARN,
+			{ title = "todoist-nvim" }
+		)
 		return
 	end
 
@@ -349,7 +368,11 @@ function M.restore_under_cursor(buf)
 			if code ~= 0 then
 				local msg = table.concat(err, "\n"):gsub("%s+$", "")
 				vim.schedule(function()
-					vim.notify(msg ~= "" and msg or "Restore failed.", vim.log.levels.ERROR, { title = "todoist-nvim" })
+					vim.notify(
+						msg ~= "" and msg or ("Restore failed (exit " .. code .. ")."),
+						vim.log.levels.ERROR,
+						{ title = "todoist-nvim" }
+					)
 				end)
 				return
 			end
