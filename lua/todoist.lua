@@ -1,14 +1,4 @@
 -- lua/todoist.lua  (v0.2 — fetch + sync)
---
--- Public API:
---   M.setup(opts)   → register :TodoistOpen command (call once from config)
---   M.open()        → fetch tasks and open/refresh the scratch buffer
---   M.sync()        → sync the current buffer to Todoist, then re-fetch
---
--- Keymaps inside the Todoist buffer:
---   q          close buffer
---   r / <C-r>  refresh (re-fetch)
---   <localleader>s  sync buffer → Todoist, then re-fetch
 
 local M = {}
 
@@ -60,6 +50,30 @@ local function focus_buffer(buf)
 	end
 end
 
+-- Применяем conceal ПОСЛЕ того как буфер открыт в окне.
+-- conceallevel — оконная опция, окно должно существовать.
+local function apply_conceal(buf)
+	local win = vim.fn.bufwinid(buf)
+	if win ~= -1 then
+		vim.wo[win].conceallevel = 2
+		vim.wo[win].concealcursor = "nvic"
+	end
+
+	-- Запускаем Treesitter для подсветки markdown
+	local ok, _ = pcall(vim.treesitter.start, buf, "markdown")
+	if not ok then
+		-- Если Treesitter недоступен — fallback на встроенный syntax
+		vim.api.nvim_buf_call(buf, function()
+			vim.cmd("setlocal syntax=markdown")
+		end)
+	end
+
+	-- Скрываем <!-- id:XXX --> / <!-- project:XXX --> / <!-- section:XXX -->
+	vim.api.nvim_buf_call(buf, function()
+		vim.cmd("syntax match TodoistMeta /\\s*<!--[^-]*-->/ conceal")
+	end)
+end
+
 local function create_scratch_buffer()
 	local buf = vim.api.nvim_create_buf(true, true)
 	vim.api.nvim_buf_set_name(buf, BUFFER_NAME)
@@ -68,17 +82,7 @@ local function create_scratch_buffer()
 	vim.bo[buf].bufhidden = "hide"
 	vim.bo[buf].swapfile = false
 	vim.bo[buf].filetype = "markdown"
-	vim.bo[buf].modifiable = false
-	vim.bo[buf].readonly = true
-
-	-- Conceal the <!-- id:XXX --> / <!-- project:XXX --> / <!-- section:XXX -->
-	-- comments so the buffer looks clean.  The raw text (with IDs) is still
-	-- there and will be read by the sync engine.
-	vim.wo[win].conceallevel = 2
-	vim.wo[win].concealcursor = "nvic"
-	vim.api.nvim_buf_call(buf, function()
-		vim.cmd([[syntax match TodoistMeta /\s*<!--\_.\{-}-->/ conceal]])
-	end)
+	-- modifiable=true — пользователь редактирует буфер перед sync
 
 	local opts = { buffer = buf, noremap = true, silent = true }
 
@@ -107,7 +111,8 @@ function M._open_buffer(lines)
 		buf = create_scratch_buffer()
 	end
 	set_buffer_lines(buf, lines)
-	focus_buffer(buf)
+	focus_buffer(buf) -- сначала фокус (создаёт окно)
+	apply_conceal(buf) -- потом conceal (окно уже есть)
 	vim.api.nvim_win_set_cursor(0, { 1, 0 })
 end
 
@@ -175,15 +180,12 @@ function M.sync()
 		return
 	end
 
-	-- Find the Todoist buffer.
 	local buf = find_existing_buffer()
 	if not buf then
 		vim.notify("No Todoist buffer found. Run :TodoistOpen first.", vim.log.levels.WARN, { title = "todoist-nvim" })
 		return
 	end
 
-	-- Temporarily lift readonly so we can read lines.
-	-- (nvim_buf_get_lines doesn't need modifiable, but just to be safe.)
 	local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
 
 	if #lines == 0 then
@@ -191,7 +193,6 @@ function M.sync()
 		return
 	end
 
-	-- Write buffer to a temp file for the binary to read.
 	local tmpfile = vim.fn.tempname()
 	vim.fn.writefile(lines, tmpfile)
 
@@ -212,7 +213,6 @@ function M.sync()
 		end,
 
 		on_exit = function(_, code)
-			-- Clean up temp file regardless of outcome.
 			vim.fn.delete(tmpfile)
 
 			if code ~= 0 then
@@ -229,11 +229,7 @@ function M.sync()
 
 			local summary = table.concat(stdout_chunks, "\n"):gsub("%s+$", "")
 			vim.schedule(function()
-				-- Show sync summary.
 				vim.notify(summary, vim.log.levels.INFO, { title = "todoist-nvim sync" })
-
-				-- Re-fetch to update IDs for newly created tasks and reflect
-				-- completed/deleted tasks being gone.
 				vim.defer_fn(function()
 					M.open()
 				end, 500)
