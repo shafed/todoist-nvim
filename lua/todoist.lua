@@ -64,18 +64,18 @@ local function create_scratch_buffer()
 	local buf = vim.api.nvim_create_buf(true, true)
 	vim.api.nvim_buf_set_name(buf, BUFFER_NAME)
 
-	vim.api.nvim_buf_set_option(buf, "buftype", "nofile")
-	vim.api.nvim_buf_set_option(buf, "bufhidden", "hide")
-	vim.api.nvim_buf_set_option(buf, "swapfile", false)
-	vim.api.nvim_buf_set_option(buf, "filetype", "markdown")
-	vim.api.nvim_buf_set_option(buf, "modifiable", false)
-	vim.api.nvim_buf_set_option(buf, "readonly", true)
+	vim.bo[buf].buftype = "nofile"
+	vim.bo[buf].bufhidden = "hide"
+	vim.bo[buf].swapfile = false
+	vim.bo[buf].filetype = "markdown"
+	vim.bo[buf].modifiable = false
+	vim.bo[buf].readonly = true
 
 	-- Conceal the <!-- id:XXX --> / <!-- project:XXX --> / <!-- section:XXX -->
 	-- comments so the buffer looks clean.  The raw text (with IDs) is still
 	-- there and will be read by the sync engine.
-	vim.api.nvim_buf_set_option(buf, "conceallevel", 2)
-	vim.api.nvim_buf_set_option(buf, "concealcursor", "nvic")
+	vim.wo[win].conceallevel = 2
+	vim.wo[win].concealcursor = "nvic"
 	vim.api.nvim_buf_call(buf, function()
 		vim.cmd([[syntax match TodoistMeta /\s*<!--\_.\{-}-->/ conceal]])
 	end)
