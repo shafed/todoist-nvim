@@ -118,7 +118,7 @@ local function create_buf(name, is_readonly)
 	vim.bo[buf].buftype = "nofile"
 	vim.bo[buf].bufhidden = "hide"
 	vim.bo[buf].swapfile = false
-	vim.bo[buf].filetype = "markdown"
+	vim.bo[buf].filetype = "todoist"
 	if is_readonly then
 		vim.bo[buf].modifiable = false
 		vim.bo[buf].readonly = true
@@ -196,7 +196,7 @@ end
 -- ─── Treesitter highlighting ─────────────────────────────────────────────────
 
 local function start_treesitter(buf)
-	vim.bo[buf].filetype = "markdown"
+	-- filetype = "todoist", но рендерим подсветку markdown-парсером
 	local ok, _ = pcall(vim.treesitter.start, buf, "markdown")
 	if not ok then
 		vim.api.nvim_buf_call(buf, function()
@@ -340,15 +340,10 @@ function M.restore_under_cursor(buf)
 	local row = vim.api.nvim_win_get_cursor(win)[1]
 	local line = vim.api.nvim_buf_get_lines(buf, row - 1, row, false)[1] or ""
 
-	-- Более универсальный паттерн: ловит id:XXX, task_id:XXX и т.д.
-	-- %S+ вместо [^%s%-]+ — не исключает дефисы и другие символы
-	local task_id = line:match("<!%-%-[^>]*id:(%S+)%s*%-%->")
+	-- Стало (просто ищем id:XXX в любом месте строки):
+	local task_id = line:match("id:(%S+)")
 	if not task_id then
-		vim.notify(
-			"No task ID found on this line.\nRaw: " .. line,
-			vim.log.levels.WARN,
-			{ title = "todoist-nvim" }
-		)
+		vim.notify("No task ID found on this line.\nRaw: " .. line, vim.log.levels.WARN, { title = "todoist-nvim" })
 		return
 	end
 
