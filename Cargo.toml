@@ -1,0 +1,20 @@
+[package]
+name = "todoist-nvim"
+version = "0.1.0"
+edition = "2021"
+description = "Rust binary that fetches Todoist tasks and renders them as Markdown for Neovim"
+
+[[bin]]
+name = "todoist-nvim"
+path = "src/main.rs"
+
+[dependencies]
+reqwest  = { version = "0.11", features = ["blocking", "json"] }
+serde    = { version = "1",    features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = "z"   # minimise binary size — this is a CLI tool, not a library
+lto = true
+codegen-units = 1
+strip = true
