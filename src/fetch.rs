@@ -130,7 +130,8 @@ pub fn run_completed() -> Result<(), String> {
     for project in &projects {
         let pid = project.id.as_str();
         let Some(tasks) = by_project.get(pid) else { continue; };
-        let proj_name = project_names.get(pid).unwrap_or(&project.name.as_str());
+        let fallback  = project.name.as_str();
+        let proj_name = project_names.get(pid).copied().unwrap_or(fallback);
         out.push_str(&format!("## {} <!-- project:{} -->\n\n", proj_name, pid));
         for task in tasks {
             out.push_str(&format!("- [x] {} <!-- id:{} -->\n", task.content, task.id));
