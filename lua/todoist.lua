@@ -52,58 +52,62 @@ end
 
 -- ─── Extmark-based ID concealment ────────────────────────────────────────────
 --
--- After filling the buffer we scan every line for <!-- ... --> and place an
--- extmark that conceals the entire comment region.  Extmarks:
---   • hide the text even on the cursor line (unlike syntax conceal)
---   • follow text as lines are inserted/deleted
---   • do NOT affect the actual buffer bytes — sync still reads real content
+-- Scans every line for <!-- ... --> and places an extmark with conceal="".
+-- Combined with conceallevel=3 and concealcursor="nvic", the comment is
+-- hidden in ALL modes including on the cursor line.
+-- The actual buffer bytes are untouched — sync still reads real content.
 
 local function apply_extmark_conceal(buf)
 	vim.api.nvim_buf_clear_namespace(buf, NS, 0, -1)
 
 	local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
 	for lnum, line in ipairs(lines) do
-		-- Match optional leading space + <!-- ... -->
-		local s = line:find("%s*<!%-%-")
-		if s then
-			local e = line:find("%-%->", s)
-			if e then
-				local end_col = e + 2 -- inclusive of ">"
-				-- Overlay virt_text replaces the region visually with nothing.
-				-- Unlike conceal="", this works on the cursor line in all modes
-				-- regardless of conceallevel / concealcursor settings.
-				vim.api.nvim_buf_set_extmark(buf, NS, lnum - 1, s - 1, {
-					end_col = end_col,
-					virt_text = { { "", "Normal" } },
-					virt_text_pos = "overlay",
-					hl_mode = "combine",
-				})
-			end
+		-- Capture leading whitespace before <!-- and trailing whitespace after -->
+		local s, e = line:find("%s*<!%-%-.*%-%->%s*")
+		if s and e then
+			vim.api.nvim_buf_set_extmark(buf, NS, lnum - 1, s - 1, {
+				end_col = e,
+				conceal = "",
+			})
 		end
 	end
 end
 
 -- ─── conceallevel on the window ──────────────────────────────────────────────
--- overlay extmarks handle concealment; set conceallevel=0 so other plugins
--- don't interfere with the extmark overlay.
+--
+-- Sets conceallevel=3 + concealcursor="nvic" and guards against other
+-- plugins resetting these values via autocmds.
 
 local function set_conceal(buf)
 	local function apply(win)
-		vim.wo[win].conceallevel = 0
-		vim.wo[win].concealcursor = ""
+		vim.wo[win].conceallevel = 3
+		vim.wo[win].concealcursor = "nvic"
 	end
 
 	local win = vim.fn.bufwinid(buf)
 	if win ~= -1 then
 		apply(win)
-	else
-		vim.schedule(function()
+	end
+
+	-- Re-apply on every window/buffer enter to guard against resets
+	local guard_id = vim.api.nvim_create_autocmd({ "BufEnter", "BufWinEnter", "WinEnter" }, {
+		buffer = buf,
+		callback = function()
 			local w = vim.fn.bufwinid(buf)
 			if w ~= -1 then
 				apply(w)
 			end
-		end)
-	end
+		end,
+	})
+
+	-- Clean up guard autocmd when buffer is deleted
+	vim.api.nvim_create_autocmd("BufDelete", {
+		buffer = buf,
+		once = true,
+		callback = function()
+			pcall(vim.api.nvim_del_autocmd, guard_id)
+		end,
+	})
 end
 
 -- ─── Buffer creation ─────────────────────────────────────────────────────────
@@ -162,7 +166,7 @@ local function setup_active_keymaps(buf)
 		M.completed()
 	end, vim.tbl_extend("force", o, { desc = "Open Completed" }))
 
-	-- Re-apply extmark overlay after any text change (user edits tasks).
+	-- Re-apply concealment after any text change (editing tasks)
 	vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
 		buffer = buf,
 		callback = function()
@@ -192,9 +196,7 @@ end
 -- ─── Treesitter highlighting ─────────────────────────────────────────────────
 
 local function start_treesitter(buf)
-	-- Force filetype in case autodetect overrode it
 	vim.bo[buf].filetype = "markdown"
-	-- Start Treesitter markdown parser; fall back to legacy syntax if unavailable
 	local ok, _ = pcall(vim.treesitter.start, buf, "markdown")
 	if not ok then
 		vim.api.nvim_buf_call(buf, function()
@@ -213,9 +215,9 @@ function M._fill_active_buffer(lines)
 	end
 	set_lines(buf, lines)
 	focus_buf(buf)
-	set_conceal(buf)
 	start_treesitter(buf)
 	apply_extmark_conceal(buf)
+	set_conceal(buf)
 	vim.api.nvim_win_set_cursor(0, { 1, 0 })
 end
 
@@ -270,9 +272,9 @@ function M._fill_completed_buffer(lines)
 	end
 	set_lines(buf, lines)
 	focus_buf(buf)
-	set_conceal(buf)
 	start_treesitter(buf)
 	apply_extmark_conceal(buf)
+	set_conceal(buf)
 	vim.api.nvim_win_set_cursor(0, { 1, 0 })
 end
 
@@ -314,10 +316,6 @@ function M.completed()
 end
 
 -- ─── restore_under_cursor() ──────────────────────────────────────────────────
---
--- Reads the <!-- id:XXX --> from the current line (the extmark is concealed
--- visually but the raw text is still in the buffer), extracts the ID, and
--- calls the binary with `reopen <id>`.
 
 function M.restore_under_cursor(buf)
 	local binary = find_binary()
@@ -329,7 +327,6 @@ function M.restore_under_cursor(buf)
 	local row = vim.api.nvim_win_get_cursor(0)[1]
 	local line = vim.api.nvim_buf_get_lines(buf, row - 1, row, false)[1] or ""
 
-	-- Extract id from <!-- id:XXXX -->
 	local task_id = line:match("<!%-%-%s*id:([^%s%-]+)%s*%-%->")
 	if not task_id then
 		vim.notify("No task ID found on this line.", vim.log.levels.WARN, { title = "todoist-nvim" })
@@ -358,7 +355,6 @@ function M.restore_under_cursor(buf)
 			end
 			vim.schedule(function()
 				vim.notify("Task restored!", vim.log.levels.INFO, { title = "todoist-nvim" })
-				-- Refresh both buffers.
 				vim.defer_fn(function()
 					M.completed()
 					vim.defer_fn(function()
@@ -441,6 +437,15 @@ function M.setup(opts)
 	vim.api.nvim_create_user_command("TodoistSync", function()
 		M.sync()
 	end, { desc = "Sync Todoist buffer → Todoist", nargs = 0 })
+
+	vim.api.nvim_create_user_command("TodoistRestore", function()
+		local buf = find_buf(COMPLETED_BUF_NAME)
+		if not buf then
+			vim.notify("Open :TodoistCompleted first.", vim.log.levels.WARN, { title = "todoist-nvim" })
+			return
+		end
+		M.restore_under_cursor(buf)
+	end, { desc = "Restore completed task under cursor", nargs = 0 })
 end
 
 return M
