@@ -63,14 +63,20 @@ local function apply_extmark_conceal(buf)
 
 	local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
 	for lnum, line in ipairs(lines) do
-		local s = line:find("<!%-%-")
+		-- Match optional leading space + <!-- ... -->
+		local s = line:find("%s*<!%-%-")
 		if s then
 			local e = line:find("%-%->", s)
 			if e then
-				-- end_col is exclusive and includes "-->" (3 chars)
+				local end_col = e + 2 -- inclusive of ">"
+				-- Overlay virt_text replaces the region visually with nothing.
+				-- Unlike conceal="", this works on the cursor line in all modes
+				-- regardless of conceallevel / concealcursor settings.
 				vim.api.nvim_buf_set_extmark(buf, NS, lnum - 1, s - 1, {
-					end_col = e + 2, -- covers ">"
-					conceal = "",
+					end_col = end_col,
+					virt_text = { { "", "Normal" } },
+					virt_text_pos = "overlay",
+					hl_mode = "combine",
 				})
 			end
 		end
@@ -78,11 +84,13 @@ local function apply_extmark_conceal(buf)
 end
 
 -- ─── conceallevel on the window ──────────────────────────────────────────────
+-- overlay extmarks handle concealment; set conceallevel=0 so other plugins
+-- don't interfere with the extmark overlay.
 
 local function set_conceal(buf)
 	local function apply(win)
-		vim.wo[win].conceallevel = 3
-		vim.wo[win].concealcursor = "nvic"
+		vim.wo[win].conceallevel = 0
+		vim.wo[win].concealcursor = ""
 	end
 
 	local win = vim.fn.bufwinid(buf)
@@ -153,6 +161,14 @@ local function setup_active_keymaps(buf)
 	vim.keymap.set("n", "<localleader>c", function()
 		M.completed()
 	end, vim.tbl_extend("force", o, { desc = "Open Completed" }))
+
+	-- Re-apply extmark overlay after any text change (user edits tasks).
+	vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
+		buffer = buf,
+		callback = function()
+			apply_extmark_conceal(buf)
+		end,
+	})
 end
 
 -- ─── Completed tasks buffer keymaps ──────────────────────────────────────────
@@ -425,15 +441,6 @@ function M.setup(opts)
 	vim.api.nvim_create_user_command("TodoistSync", function()
 		M.sync()
 	end, { desc = "Sync Todoist buffer → Todoist", nargs = 0 })
-
-	vim.api.nvim_create_user_command("TodoistRestore", function()
-		local buf = find_buf(COMPLETED_BUF_NAME)
-		if not buf then
-			vim.notify("Open :TodoistCompleted first.", vim.log.levels.WARN, { title = "todoist-nvim" })
-			return
-		end
-		M.restore_under_cursor(buf)
-	end, { desc = "Restore completed task under cursor", nargs = 0 })
 end
 
 return M
