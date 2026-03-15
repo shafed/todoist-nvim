@@ -43,43 +43,39 @@ struct Page<T> {
 
 /// A Todoist project (top-level container).
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct Project {
     id: String,
     name: String,
-    /// Display order within its level.
-    #[serde(default)]
+    #[serde(alias = "childOrder", default)]
     child_order: i64,
-    /// `true` for the built-in Inbox project — we still show it.
-    #[serde(default)]
+    #[allow(dead_code)]
+    #[serde(alias = "inboxProject", default)]
     inbox_project: bool,
 }
 
 /// A section inside a project.
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct Section {
     id: String,
+    #[serde(alias = "projectId")]
     project_id: String,
     name: String,
-    /// Display order within the project.
-    #[serde(default)]
+    #[serde(alias = "sectionOrder", default)]
     section_order: i64,
 }
 
 /// A single active task.
 #[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct Task {
     id: String,
     content: String,
+    #[serde(alias = "projectId")]
     project_id: String,
-    /// `null` when there is no section.
+    #[serde(alias = "sectionId")]
     section_id: Option<String>,
-    /// Set only for sub-tasks; `null` for root tasks.
+    #[serde(alias = "parentId")]
     parent_id: Option<String>,
-    /// Display order within its parent container.
-    #[serde(default)]
+    #[serde(alias = "childOrder", default)]
     child_order: i64,
 }
 
