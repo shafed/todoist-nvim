@@ -53,25 +53,18 @@ end
 -- Применяем conceal ПОСЛЕ того как буфер открыт в окне.
 -- conceallevel — оконная опция, окно должно существовать.
 local function apply_conceal(buf)
-	-- Принудительно перебить автодетект filetype
 	vim.bo[buf].filetype = "markdown"
 
 	local win = vim.fn.bufwinid(buf)
 	if win ~= -1 then
 		vim.wo[win].conceallevel = 2
-		vim.wo[win].concealcursor = "nvic"
+		vim.wo[win].concealcursor = "nvic" -- скрывать даже на строке с курсором
 	end
 
-	-- Запускаем Treesitter для подсветки markdown
-	local ok, _ = pcall(vim.treesitter.start, buf, "markdown")
-	if not ok then
-		-- Если Treesitter недоступен — fallback на встроенный syntax
-		vim.api.nvim_buf_call(buf, function()
-			vim.cmd("setlocal syntax=markdown")
-		end)
-	end
+	-- Treesitter
+	pcall(vim.treesitter.start, buf, "markdown")
 
-	-- Скрываем <!-- id:XXX --> / <!-- project:XXX --> / <!-- section:XXX -->
+	-- Скрыть комментарии с ID
 	vim.api.nvim_buf_call(buf, function()
 		vim.cmd("syntax match TodoistMeta /\\s*<!--[^-]*-->/ conceal")
 	end)
