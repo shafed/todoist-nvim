@@ -95,48 +95,41 @@ pub fn run() -> Result<(), String> {
 }
 
 /// Fetch and render the completed tasks buffer.
+/// Flat list sorted by completion date — most recent first.
+/// No project/section grouping, matching Todoist's activity view.
 pub fn run_completed() -> Result<(), String> {
     let token = read_token()?;
 
-    // projects and completed tasks are independent — fetch in parallel.
-    let t1 = token.clone();
-    let projects_handle  = thread::spawn(move || api::fetch_projects(&Client::new(), &t1));
-
-    let t2 = token.clone();
-    let completed_handle = thread::spawn(move || api::fetch_completed_tasks(&Client::new(), &t2));
-
-    let projects  = projects_handle.join()
-        .map_err(|_| "projects thread panicked".to_string())??;
-    let completed = completed_handle.join()
-        .map_err(|_| "completed tasks thread panicked".to_string())??;
-
-    let project_names: HashMap<&str, &str> = projects.iter()
-        .map(|p| (p.id.as_str(), p.name.as_str()))
-        .collect();
+    let mut completed = api::fetch_completed_tasks(&Client::new(), &token)?;
 
     if completed.is_empty() {
         println!("# Completed Tasks\n\n*No completed tasks in the last 30 days.*");
         return Ok(());
     }
 
-    // Group by project.
-    let mut by_project: HashMap<&str, Vec<&crate::models::CompletedTask>> = HashMap::new();
-    for task in &completed {
-        by_project.entry(task.project_id.as_str()).or_default().push(task);
-    }
+    // Sort by completed_at descending (most recent first).
+    // ISO-8601 strings sort correctly lexicographically.
+    completed.sort_by(|a, b| {
+        let ta = a.completed_at.as_deref().unwrap_or("");
+        let tb = b.completed_at.as_deref().unwrap_or("");
+        tb.cmp(ta)
+    });
 
     let mut out = String::from("# Completed Tasks\n\n");
 
-    for project in &projects {
-        let pid = project.id.as_str();
-        let Some(tasks) = by_project.get(pid) else { continue; };
-        let fallback  = project.name.as_str();
-        let proj_name = project_names.get(pid).copied().unwrap_or(fallback);
-        out.push_str(&format!("## {} <!-- project:{} -->\n\n", proj_name, pid));
-        for task in tasks {
+    for task in &completed {
+        let date = task.completed_at.as_deref()
+            .and_then(|s| s.get(..10)) // "YYYY-MM-DD"
+            .unwrap_or("");
+
+        if date.is_empty() {
             out.push_str(&format!("- [x] {} <!-- id:{} -->\n", task.content, task.id));
+        } else {
+            out.push_str(&format!(
+                "- [x] {} <!-- id:{} date:{} -->\n",
+                task.content, task.id, date
+            ));
         }
-        out.push('\n');
     }
 
     print!("{}", out);

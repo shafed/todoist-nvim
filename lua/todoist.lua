@@ -173,6 +173,20 @@ local function setup_completed_keymaps(buf)
 	end, vim.tbl_extend("force", o, { desc = "Restore task" }))
 end
 
+-- ─── Treesitter highlighting ─────────────────────────────────────────────────
+
+local function start_treesitter(buf)
+	-- Force filetype in case autodetect overrode it
+	vim.bo[buf].filetype = "markdown"
+	-- Start Treesitter markdown parser; fall back to legacy syntax if unavailable
+	local ok, _ = pcall(vim.treesitter.start, buf, "markdown")
+	if not ok then
+		vim.api.nvim_buf_call(buf, function()
+			vim.cmd("setlocal syntax=markdown")
+		end)
+	end
+end
+
 -- ─── open() ──────────────────────────────────────────────────────────────────
 
 function M._fill_active_buffer(lines)
@@ -184,6 +198,7 @@ function M._fill_active_buffer(lines)
 	set_lines(buf, lines)
 	focus_buf(buf)
 	set_conceal(buf)
+	start_treesitter(buf)
 	apply_extmark_conceal(buf)
 	vim.api.nvim_win_set_cursor(0, { 1, 0 })
 end
@@ -240,6 +255,7 @@ function M._fill_completed_buffer(lines)
 	set_lines(buf, lines)
 	focus_buf(buf)
 	set_conceal(buf)
+	start_treesitter(buf)
 	apply_extmark_conceal(buf)
 	vim.api.nvim_win_set_cursor(0, { 1, 0 })
 end
@@ -409,15 +425,15 @@ function M.setup(opts)
 	vim.api.nvim_create_user_command("TodoistSync", function()
 		M.sync()
 	end, { desc = "Sync Todoist buffer → Todoist", nargs = 0 })
-end
 
-vim.api.nvim_create_user_command("TodoistRestore", function()
-	local buf = find_buf(COMPLETED_BUF_NAME)
-	if not buf then
-		vim.notify("Open :TodoistCompleted first.", vim.log.levels.WARN, { title = "todoist-nvim" })
-		return
-	end
-	M.restore_under_cursor(buf)
-end, { desc = "Restore completed task under cursor", nargs = 0 })
+	vim.api.nvim_create_user_command("TodoistRestore", function()
+		local buf = find_buf(COMPLETED_BUF_NAME)
+		if not buf then
+			vim.notify("Open :TodoistCompleted first.", vim.log.levels.WARN, { title = "todoist-nvim" })
+			return
+		end
+		M.restore_under_cursor(buf)
+	end, { desc = "Restore completed task under cursor", nargs = 0 })
+end
 
 return M
