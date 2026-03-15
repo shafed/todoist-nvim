@@ -1,75 +1,150 @@
 // src/fetch.rs
 //
-// Fetches projects / sections / tasks from Todoist API v1, renders them as
-// Markdown with embedded metadata comments, saves a snapshot, and prints
-// the result to stdout for the Lua layer to capture.
+// # Buffer structure (updated)
 //
-// # Embedded metadata format
+//   # Todoist Tasks                    ← H1: fixed buffer title
 //
-// The rendered buffer uses invisible HTML comments to carry Todoist IDs.
-// Neovim's conceal feature hides them; the sync parser reads them back.
+//   ## Inbox <!-- project:ID -->       ← H2: project name
 //
-// ```markdown
-// # Work <!-- project:6X4Vw2Hfmg73Q2XR -->
+//   - [ ] Task <!-- id:ID -->
+//       - [ ] Subtask <!-- id:ID -->
 //
-// ## Backend <!-- section:7X4Vw2Hfmg73Q2XR -->
+//   ## Work <!-- project:ID -->
 //
-// - [ ] Fix auth bug <!-- id:8X4Vw2Hfmg73Q2XR -->
-//     - [ ] Write test <!-- id:9X4Vw2Hfmg73Q2XR -->
-// ```
+//   ### Backend <!-- section:ID -->    ← H3: section (optional)
+//
+//   - [ ] Fix bug <!-- id:ID -->
+//
+// H1 is a fixed title — never changes.
+// H2 = project.  H3 = section (omitted when project has no sections).
+// IDs are in HTML comments; Lua hides them with extmarks.
+//
+// # Subtask indentation
+//
+// Each indent level uses exactly 2 spaces (renders cleanly in markdown
+// and is unambiguous to parse: 2 spaces = 1 level).
 
 use crate::api;
 use crate::models::{Snapshot, SnapshotTask, Task};
 use crate::snapshot;
 use reqwest::blocking::Client;
 use std::collections::HashMap;
+use std::thread;
 
 pub fn run() -> Result<(), String> {
     let token = read_token()?;
-    let client = Client::new();
 
-    let mut projects = api::fetch_projects(&client, &token)?;
-    let sections = api::fetch_sections(&client, &token)?;
-    let tasks = api::fetch_tasks(&client, &token)?;
+    // Spawn three independent threads — projects / sections / tasks are
+    // completely independent, so we fetch them in parallel.
+    // Each thread creates its own Client (cheap: no shared connection pool
+    // with blocking clients, but we avoid contention).
+    //
+    // Wall-clock time: max(t_projects, t_sections, t_tasks)
+    // instead of t_projects + t_sections + t_tasks  (~3× faster).
+
+    let t1 = token.clone();
+    let projects_handle = thread::spawn(move || {
+        api::fetch_projects(&Client::new(), &t1)
+    });
+
+    let t2 = token.clone();
+    let sections_handle = thread::spawn(move || {
+        api::fetch_sections(&Client::new(), &t2)
+    });
+
+    let t3 = token.clone();
+    let tasks_handle = thread::spawn(move || {
+        api::fetch_tasks(&Client::new(), &t3)
+    });
+
+    let mut projects = projects_handle
+        .join()
+        .map_err(|_| "projects fetch thread panicked".to_string())??;
+    let sections = sections_handle
+        .join()
+        .map_err(|_| "sections fetch thread panicked".to_string())??;
+    let tasks = tasks_handle
+        .join()
+        .map_err(|_| "tasks fetch thread panicked".to_string())??;
 
     if tasks.is_empty() {
-        println!("# 🎉 No active tasks\n\nYour Todoist is empty — enjoy the peace!");
+        println!("# Todoist Tasks\n\n*No active tasks — enjoy the peace!*");
         return Ok(());
     }
 
-    // Build and save snapshot before rendering.
-    let snap_tasks: HashMap<String, SnapshotTask> = tasks
-        .iter()
-        .map(|t| {
-            (
-                t.id.clone(),
-                SnapshotTask {
-                    id: t.id.clone(),
-                    content: t.content.clone(),
-                    project_id: t.project_id.clone(),
-                    section_id: t.section_id.clone(),
-                    parent_id: t.parent_id.clone(),
-                },
-            )
+    // Save snapshot before rendering.
+    let snap_tasks: HashMap<String, SnapshotTask> = tasks.iter().map(|t| {
+        (t.id.clone(), SnapshotTask {
+            id: t.id.clone(),
+            content: t.content.clone(),
+            project_id: t.project_id.clone(),
+            section_id: t.section_id.clone(),
+            parent_id: t.parent_id.clone(),
+            checked: false, // active tasks are unchecked
         })
-        .collect();
-    let snap = Snapshot::new(snap_tasks);
-    // Non-fatal: warn on snapshot save failure but don't abort fetch.
-    if let Err(e) = snapshot::save(&snap) {
+    }).collect();
+
+    if let Err(e) = snapshot::save(&Snapshot::new(snap_tasks)) {
         eprintln!("Warning: could not save snapshot: {}", e);
     }
 
-    // Render and print.
     projects.sort_by_key(|p| p.child_order);
     let output = render(&projects, &sections, &tasks)?;
     print!("{}", output);
     Ok(())
 }
 
+/// Fetch and render the completed tasks buffer.
+pub fn run_completed() -> Result<(), String> {
+    let token = read_token()?;
+
+    // projects and completed tasks are independent — fetch in parallel.
+    let t1 = token.clone();
+    let projects_handle  = thread::spawn(move || api::fetch_projects(&Client::new(), &t1));
+
+    let t2 = token.clone();
+    let completed_handle = thread::spawn(move || api::fetch_completed_tasks(&Client::new(), &t2));
+
+    let projects  = projects_handle.join()
+        .map_err(|_| "projects thread panicked".to_string())??;
+    let completed = completed_handle.join()
+        .map_err(|_| "completed tasks thread panicked".to_string())??;
+
+    let project_names: HashMap<&str, &str> = projects.iter()
+        .map(|p| (p.id.as_str(), p.name.as_str()))
+        .collect();
+
+    if completed.is_empty() {
+        println!("# Completed Tasks\n\n*No completed tasks in the last 30 days.*");
+        return Ok(());
+    }
+
+    // Group by project.
+    let mut by_project: HashMap<&str, Vec<&crate::models::CompletedTask>> = HashMap::new();
+    for task in &completed {
+        by_project.entry(task.project_id.as_str()).or_default().push(task);
+    }
+
+    let mut out = String::from("# Completed Tasks\n\n");
+
+    for project in &projects {
+        let pid = project.id.as_str();
+        let Some(tasks) = by_project.get(pid) else { continue; };
+        let proj_name = project_names.get(pid).unwrap_or(&project.name.as_str());
+        out.push_str(&format!("## {} <!-- project:{} -->\n\n", proj_name, pid));
+        for task in tasks {
+            out.push_str(&format!("- [x] {} <!-- id:{} -->\n", task.content, task.id));
+        }
+        out.push('\n');
+    }
+
+    print!("{}", out);
+    Ok(())
+}
+
 pub fn read_token() -> Result<String, String> {
     std::env::var("TODOIST_API_TOKEN").map_err(|_| {
         "TODOIST_API_TOKEN is not set.\n\
-         Add it to your shell profile or Neovim config:\n\
          export TODOIST_API_TOKEN=\"your_token_here\"\n\
          Get your token: https://app.todoist.com/app/settings/integrations/developer"
             .to_string()
@@ -83,13 +158,9 @@ fn render(
     sections: &[crate::models::Section],
     tasks: &[Task],
 ) -> Result<String, String> {
-    // Build index maps.
     let mut sections_by_project: HashMap<&str, Vec<&crate::models::Section>> = HashMap::new();
     for sec in sections {
-        sections_by_project
-            .entry(sec.project_id.as_str())
-            .or_default()
-            .push(sec);
+        sections_by_project.entry(sec.project_id.as_str()).or_default().push(sec);
     }
     for v in sections_by_project.values_mut() {
         v.sort_by_key(|s| s.section_order);
@@ -121,21 +192,17 @@ fn render(
             .push(task);
     }
 
-    let mut out = String::with_capacity(4096);
+    // H1 = fixed buffer title
+    let mut out = String::from("# Todoist Tasks\n\n");
 
     for project in projects {
         let pid = project.id.as_str();
-        let Some(section_map) = by_project.get(pid) else {
-            continue;
-        };
+        let Some(section_map) = by_project.get(pid) else { continue; };
 
-        // H1 with embedded project ID.
-        out.push_str(&format!(
-            "# {} <!-- project:{} -->\n\n",
-            project.name, project.id
-        ));
+        // H2 = project name
+        out.push_str(&format!("## {} <!-- project:{} -->\n\n", project.name, project.id));
 
-        // Unsectioned tasks first.
+        // Unsectioned tasks directly under the project.
         if let Some(unsectioned) = section_map.get(&None) {
             for task in unsectioned {
                 render_task(&mut out, task, &subtask_map, 0);
@@ -143,21 +210,13 @@ fn render(
             out.push('\n');
         }
 
-        // Sectioned tasks.
+        // H3 = section name (only when the project actually has sections).
         if let Some(secs) = sections_by_project.get(pid) {
             for sec in secs {
                 let sid = sec.id.as_str();
-                let Some(tasks_in_sec) = section_map.get(&Some(sid)) else {
-                    continue;
-                };
-                if tasks_in_sec.is_empty() {
-                    continue;
-                }
-                // H2 with embedded section ID.
-                out.push_str(&format!(
-                    "## {} <!-- section:{} -->\n\n",
-                    sec.name, sec.id
-                ));
+                let Some(tasks_in_sec) = section_map.get(&Some(sid)) else { continue; };
+                if tasks_in_sec.is_empty() { continue; }
+                out.push_str(&format!("### {} <!-- section:{} -->\n\n", sec.name, sec.id));
                 for task in tasks_in_sec {
                     render_task(&mut out, task, &subtask_map, 0);
                 }
@@ -166,25 +225,23 @@ fn render(
         }
     }
 
-    if out.is_empty() {
-        return Ok("# No active tasks\n\nAll projects appear to be empty.\n".to_string());
+    if out.trim() == "# Todoist Tasks" {
+        return Ok("# Todoist Tasks\n\n*All projects appear to be empty.*\n".to_string());
     }
 
     Ok(out)
 }
 
-/// Recursively render a task with `<!-- id:XXX -->` appended.
+/// Render a task recursively.
+/// Indent: 2 spaces per level — unambiguous and markdown-friendly.
 fn render_task(
     out: &mut String,
     task: &Task,
     subtask_map: &HashMap<&str, Vec<&Task>>,
     depth: usize,
 ) {
-    let indent = "    ".repeat(depth);
-    out.push_str(&format!(
-        "{}- [ ] {} <!-- id:{} -->\n",
-        indent, task.content, task.id
-    ));
+    let indent = "  ".repeat(depth);
+    out.push_str(&format!("{}- [ ] {} <!-- id:{} -->\n", indent, task.content, task.id));
     if let Some(children) = subtask_map.get(task.id.as_str()) {
         for child in children {
             render_task(out, child, subtask_map, depth + 1);

@@ -1,13 +1,10 @@
 // src/models.rs
-//
-// Shared data types used across fetch, parser, sync, and snapshot modules.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-// ─── Todoist REST API v1 shapes ──────────────────────────────────────────────
+// ─── Todoist API v1 shapes ───────────────────────────────────────────────────
 
-/// Generic cursor-paginated response wrapper used by every list endpoint.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Page<T> {
@@ -59,10 +56,20 @@ impl Task {
     }
 }
 
-// ─── Snapshot (persisted state at last fetch) ────────────────────────────────
+/// A completed task returned by the completed-tasks endpoints.
+#[derive(Debug, Deserialize, Clone)]
+pub struct CompletedTask {
+    pub id: String,
+    pub content: String,
+    #[serde(alias = "projectId")]
+    pub project_id: String,
+    #[serde(alias = "completedAt")]
+    pub completed_at: Option<String>,
+}
 
-/// One task as recorded in the snapshot file.
-/// Only fields relevant for diff detection are stored.
+// ─── Snapshot ────────────────────────────────────────────────────────────────
+
+/// Snapshot of a single task at last-fetch time.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SnapshotTask {
     pub id: String,
@@ -70,20 +77,20 @@ pub struct SnapshotTask {
     pub project_id: String,
     pub section_id: Option<String>,
     pub parent_id: Option<String>,
+    /// Whether the task was checked (completed) in the buffer at snapshot time.
+    /// Used to detect [x] → [ ] transitions (reopen).
+    #[serde(default)]
+    pub checked: bool,
 }
 
-/// Full snapshot written after every successful fetch.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Snapshot {
-    /// ISO-8601 UTC timestamp of when the snapshot was taken.
     pub fetched_at: String,
-    /// task_id → SnapshotTask
     pub tasks: HashMap<String, SnapshotTask>,
 }
 
 impl Snapshot {
     pub fn new(tasks: HashMap<String, SnapshotTask>) -> Self {
-        // Minimal UTC timestamp without chrono dep.
         Snapshot {
             fetched_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -94,38 +101,25 @@ impl Snapshot {
     }
 }
 
-// ─── Buffer parsing types ────────────────────────────────────────────────────
+// ─── Buffer parsing ──────────────────────────────────────────────────────────
 
-/// A task as parsed from the Neovim markdown buffer.
 #[derive(Debug, Clone)]
 pub struct BufferTask {
-    /// Todoist task ID extracted from `<!-- id:XXXX -->`.
-    /// `None` means this is a newly added task (must be created).
     pub id: Option<String>,
-    /// Task text with the ID comment stripped.
     pub content: String,
-    /// `true` if the checkbox is `[x]`.
     pub checked: bool,
-    /// 0 = root task, 1 = first-level subtask, etc.
     pub indent_level: usize,
-    /// Todoist project ID from the enclosing `# Name <!-- project:ID -->` heading.
     pub project_id: Option<String>,
-    /// Todoist section ID from the enclosing `## Name <!-- section:ID -->` heading.
     pub section_id: Option<String>,
-    /// Resolved parent Todoist ID (for root tasks this is None).
-    /// Set during a second pass after parsing is complete.
     pub parent_id: Option<String>,
-    /// 1-based line number in the buffer (useful for error messages).
     pub line_num: usize,
 }
 
 // ─── Sync operations ─────────────────────────────────────────────────────────
 
-/// An operation the sync engine wants to apply to Todoist.
 #[derive(Debug)]
 pub enum SyncOp {
     Create {
-        /// Human-readable description (for the summary).
         content: String,
         project_id: String,
         section_id: Option<String>,
@@ -140,18 +134,22 @@ pub enum SyncOp {
         id: String,
         content: String,
     },
+    Reopen {
+        id: String,
+        content: String,
+    },
     Delete {
         id: String,
         content: String,
     },
 }
 
-/// Summary printed to stdout after sync completes.
 #[derive(Debug, Default)]
 pub struct SyncSummary {
     pub created: usize,
     pub updated: usize,
     pub completed: usize,
+    pub reopened: usize,
     pub deleted: usize,
     pub skipped: usize,
     pub warnings: Vec<String>,
@@ -160,23 +158,22 @@ pub struct SyncSummary {
 
 impl SyncSummary {
     pub fn print(&self) {
+        if !self.has_changes() && self.warnings.is_empty() && self.errors.is_empty() {
+            println!("No changes detected.");
+            return;
+        }
         println!("Sync complete:");
-        println!("  Created:   {}", self.created);
-        println!("  Updated:   {}", self.updated);
-        println!("  Completed: {}", self.completed);
-        println!("  Deleted:   {}", self.deleted);
-        if self.skipped > 0 {
-            println!("  Skipped:   {}", self.skipped);
-        }
-        for w in &self.warnings {
-            println!("  WARNING: {}", w);
-        }
-        for e in &self.errors {
-            println!("  ERROR: {}", e);
-        }
+        if self.created   > 0 { println!("  Created:   {}", self.created); }
+        if self.updated   > 0 { println!("  Updated:   {}", self.updated); }
+        if self.completed > 0 { println!("  Completed: {}", self.completed); }
+        if self.reopened  > 0 { println!("  Reopened:  {}", self.reopened); }
+        if self.deleted   > 0 { println!("  Deleted:   {}", self.deleted); }
+        if self.skipped   > 0 { println!("  Skipped:   {}", self.skipped); }
+        for w in &self.warnings { println!("  WARNING: {}", w); }
+        for e in &self.errors   { println!("  ERROR: {}", e); }
     }
 
     pub fn has_changes(&self) -> bool {
-        self.created + self.updated + self.completed + self.deleted > 0
+        self.created + self.updated + self.completed + self.reopened + self.deleted > 0
     }
 }
