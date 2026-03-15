@@ -8,7 +8,7 @@
 -- lazy.nvim's `config` function), that's fine — setup() is idempotent.
 
 if vim.g.loaded_todoist_nvim then
-    return
+	return
 end
 vim.g.loaded_todoist_nvim = true
 

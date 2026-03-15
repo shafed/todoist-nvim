@@ -13,8 +13,8 @@ a read-only Markdown buffer inside Neovim.
 ## Backend
 
 - [ ] Fix authentication bug
-    - [ ] Write test
-    - [ ] Deploy patch
+  - [ ] Write test
+  - [ ] Deploy patch
 
 ## Infrastructure
 
@@ -25,10 +25,11 @@ a read-only Markdown buffer inside Neovim.
 - [ ] Buy groceries
 ```
 
-> **API version**: This plugin targets the [Todoist Unified API v1](https://developer.todoist.com/api/v1/)
-> (`api.todoist.com/api/v1`), which replaced the deprecated REST v2 API.
-> The key differences are: new base URL, camelCase JSON field names, and
-> cursor-based paginated list responses.
+> **API version**: This plugin targets the
+> [Todoist Unified API v1](https://developer.todoist.com/api/v1/)
+> (`api.todoist.com/api/v1`), which replaced the deprecated REST v2 API. The key
+> differences are: new base URL, camelCase JSON field names, and cursor-based
+> paginated list responses.
 
 ---
 
@@ -38,15 +39,15 @@ a read-only Markdown buffer inside Neovim.
 
 Three realistic options exist for Rust↔Neovim integration:
 
-| Approach | Pros | Cons |
-|---|---|---|
-| **Rust binary + Lua** ✅ | Simple, reliable, no RPC boilerplate | Extra build step |
-| nvim-oxi (native plugin) | No Lua required | Complex API, fragile ABI |
-| Remote plugin (RPC) | Full Neovim API access | Heavy setup, msgpack overhead |
+| Approach                 | Pros                                 | Cons                          |
+| ------------------------ | ------------------------------------ | ----------------------------- |
+| **Rust binary + Lua** ✅ | Simple, reliable, no RPC boilerplate | Extra build step              |
+| nvim-oxi (native plugin) | No Lua required                      | Complex API, fragile ABI      |
+| Remote plugin (RPC)      | Full Neovim API access               | Heavy setup, msgpack overhead |
 
-This plugin uses **option 1**: the Rust binary handles all business logic
-(HTTP, JSON parsing, hierarchy construction, Markdown rendering) and writes the
-result to stdout. A small Lua layer invokes the binary asynchronously with
+This plugin uses **option 1**: the Rust binary handles all business logic (HTTP,
+JSON parsing, hierarchy construction, Markdown rendering) and writes the result
+to stdout. A small Lua layer invokes the binary asynchronously with
 `vim.fn.jobstart`, captures the output, and populates a scratch buffer.
 
 This keeps the Rust/Lua boundary clean: Rust knows nothing about Neovim; Lua
@@ -62,12 +63,12 @@ GET https://api.todoist.com/api/v1/sections
 GET https://api.todoist.com/api/v1/tasks
 ```
 
-API v1 wraps every list response as `{ "results": [...], "nextCursor": "..." | null }`.
-The binary follows cursors until `nextCursor` is `null`, guaranteeing the
-complete dataset is fetched regardless of account size. A single
-`reqwest::blocking::Client` is reused across all requests (HTTP keep-alive).
-Blocking I/O is fine here because the binary runs as a child process —
-Neovim's `jobstart` keeps the UI thread free.
+API v1 wraps every list response as
+`{ "results": [...], "nextCursor": "..." | null }`. The binary follows cursors
+until `nextCursor` is `null`, guaranteeing the complete dataset is fetched
+regardless of account size. A single `reqwest::blocking::Client` is reused
+across all requests (HTTP keep-alive). Blocking I/O is fine here because the
+binary runs as a child process — Neovim's `jobstart` keeps the UI thread free.
 
 ### Hierarchy construction
 
@@ -83,10 +84,10 @@ under their project heading. Projects with zero active tasks are omitted.
 
 ### Buffer rendering
 
-The Rust binary writes UTF-8 Markdown to stdout. The Lua layer splits the
-output on newlines (Neovim's job layer does this automatically), removes the
-trailing empty sentinel line, and calls `nvim_buf_set_lines`. The buffer is
-configured with:
+The Rust binary writes UTF-8 Markdown to stdout. The Lua layer splits the output
+on newlines (Neovim's job layer does this automatically), removes the trailing
+empty sentinel line, and calls `nvim_buf_set_lines`. The buffer is configured
+with:
 
 - `buftype=nofile` — no backing file
 - `filetype=markdown` — syntax highlighting
@@ -99,7 +100,8 @@ configured with:
 
 - Neovim 0.8+
 - Rust toolchain (`cargo`) — for the one-time build step
-- A [Todoist API token](https://app.todoist.com/app/settings/integrations/developer)
+- A
+  [Todoist API token](https://app.todoist.com/app/settings/integrations/developer)
 
 ---
 
@@ -168,11 +170,11 @@ Open Neovim and run:
 
 ## Usage
 
-| Command | Effect |
-|---|---|
+| Command        | Effect                                   |
+| -------------- | ---------------------------------------- |
 | `:TodoistOpen` | Fetch tasks and open the Markdown buffer |
-| `r` / `<C-r>` | Refresh tasks (inside the buffer) |
-| `q` | Close the buffer |
+| `r` / `<C-r>`  | Refresh tasks (inside the buffer)        |
+| `q`            | Close the buffer                         |
 
 ---
 
@@ -184,8 +186,8 @@ Open Neovim and run:
 ## Backend
 
 - [ ] Fix authentication bug
-    - [ ] Write test
-    - [ ] Deploy patch
+  - [ ] Write test
+  - [ ] Deploy patch
 
 ## Infrastructure
 
@@ -213,13 +215,13 @@ require("todoist").setup({
 
 ## Troubleshooting
 
-| Symptom | Fix |
-|---|---|
-| `TODOIST_API_TOKEN is not set` | Export the variable in your shell profile and restart Neovim |
-| `binary not found` | Run `cargo build --release` inside the plugin directory |
-| `401 Unauthorized` | Your token is wrong or expired — regenerate it on the Todoist developer settings page |
-| `Network error` | Check your internet connection or any firewall rules |
-| Buffer shows no tasks | You have no active tasks in Todoist — congratulations! |
+| Symptom                        | Fix                                                                                   |
+| ------------------------------ | ------------------------------------------------------------------------------------- |
+| `TODOIST_API_TOKEN is not set` | Export the variable in your shell profile and restart Neovim                          |
+| `binary not found`             | Run `cargo build --release` inside the plugin directory                               |
+| `401 Unauthorized`             | Your token is wrong or expired — regenerate it on the Todoist developer settings page |
+| `Network error`                | Check your internet connection or any firewall rules                                  |
+| Buffer shows no tasks          | You have no active tasks in Todoist — congratulations!                                |
 
 ---
 
