@@ -36,13 +36,13 @@ end
 
 -- ─── Buffer registry ─────────────────────────────────────────────────────────
 
-local ACTIVE_BUF_NAME = "todoist://tasks"
-local COMPLETED_BUF_NAME = "todoist://completed"
+local ACTIVE_BUF_NAME = "Todoist Tasks"
+local COMPLETED_BUF_NAME = "Todoist Completed"
 
 local function find_buf(name)
 	for _, buf in ipairs(vim.api.nvim_list_bufs()) do
 		if vim.api.nvim_buf_is_valid(buf) then
-			if vim.api.nvim_buf_get_name(buf) == name then
+			if vim.fn.fnamemodify(vim.api.nvim_buf_get_name(buf), ":t") == name then
 				return buf
 			end
 		end
@@ -163,6 +163,7 @@ local function setup_active_keymaps(buf)
 		M.completed()
 	end, vim.tbl_extend("force", o, { desc = "Open Completed" }))
 
+	-- Re-apply concealment after any text change (editing tasks)
 	vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
 		buffer = buf,
 		callback = function()
