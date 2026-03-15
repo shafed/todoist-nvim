@@ -80,10 +80,21 @@ end
 -- ─── conceallevel on the window ──────────────────────────────────────────────
 
 local function set_conceal(buf)
+	local function apply(win)
+		vim.wo[win].conceallevel = 3
+		vim.wo[win].concealcursor = "nvic"
+	end
+
 	local win = vim.fn.bufwinid(buf)
 	if win ~= -1 then
-		vim.wo[win].conceallevel = 3 -- 3 = hide conceal chars completely
-		vim.wo[win].concealcursor = "nvic"
+		apply(win)
+	else
+		vim.schedule(function()
+			local w = vim.fn.bufwinid(buf)
+			if w ~= -1 then
+				apply(w)
+			end
+		end)
 	end
 end
 
@@ -399,5 +410,14 @@ function M.setup(opts)
 		M.sync()
 	end, { desc = "Sync Todoist buffer → Todoist", nargs = 0 })
 end
+
+vim.api.nvim_create_user_command("TodoistRestore", function()
+	local buf = find_buf(COMPLETED_BUF_NAME)
+	if not buf then
+		vim.notify("Open :TodoistCompleted first.", vim.log.levels.WARN, { title = "todoist-nvim" })
+		return
+	end
+	M.restore_under_cursor(buf)
+end, { desc = "Restore completed task under cursor", nargs = 0 })
 
 return M
