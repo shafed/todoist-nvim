@@ -153,9 +153,6 @@ end
 local function setup_active_keymaps(buf)
 	local o = { buffer = buf, noremap = true, silent = true }
 	vim.keymap.set("n", "q", "<cmd>bdelete<cr>", vim.tbl_extend("force", o, { desc = "Close" }))
-	vim.keymap.set("n", "r", function()
-		M.open()
-	end, vim.tbl_extend("force", o, { desc = "Refresh" }))
 	vim.keymap.set("n", "<C-r>", function()
 		M.open()
 	end, vim.tbl_extend("force", o, { desc = "Refresh" }))
