@@ -7,10 +7,11 @@ local M = {}
 -- ─── View constants ───────────────────────────────────────────────────────────
 
 M.VIEW = {
-	ALL_PROJECTS  = "all_projects",
+	ALL_PROJECTS   = "all_projects",
 	SINGLE_PROJECT = "single_project",
 	SINGLE_SECTION = "single_section",
-	SINGLE_TASK   = "single_task",
+	SINGLE_TASK    = "single_task",
+	COMPLETED      = "completed",
 }
 local V = M.VIEW
 
@@ -25,7 +26,7 @@ local state = {
 
 -- ─── Data cache ───────────────────────────────────────────────────────────────
 
-local cache = { projects = {} }
+local cache = { projects = {}, completed = {} }
 
 -- ─── Parsing helpers ──────────────────────────────────────────────────────────
 
@@ -95,6 +96,26 @@ function M.load(lines)
 	end
 
 	cache.projects = projects
+end
+
+-- ─── Completed loader ─────────────────────────────────────────────────────────
+-- Expects lines in the same markdown format produced by `binary completed`:
+--   - [x] Task content <!-- id:XXXX -->
+-- Optionally a date comment like <!-- completed:2024-01-15 --> is preserved.
+
+function M.load_completed(lines)
+	local tasks = {}
+	for _, line in ipairs(lines) do
+		if line:match("^%s*%- %[[xX]%]") then
+			local tid = extract_id(line, "id")
+			if tid then
+				local raw     = line:match("^%s*%- %[[xX]%]%s(.+)$") or ""
+				local content = strip_comment(raw)
+				table.insert(tasks, { id = tid, content = content })
+			end
+		end
+	end
+	cache.completed = tasks
 end
 
 -- ─── Finders ──────────────────────────────────────────────────────────────────
@@ -227,6 +248,19 @@ local function render_single_task(task, proj)
 	return out
 end
 
+local function render_completed()
+	local out = {}
+	table.insert(out, "# Completed Tasks (last 30 days)")
+	blank(out)
+	for _, task in ipairs(cache.completed) do
+		table.insert(out, "- [x] " .. task.content .. " <!-- id:" .. task.id .. " -->")
+	end
+	if #cache.completed == 0 then
+		table.insert(out, "(no completed tasks found)")
+	end
+	return out
+end
+
 local function render_current()
 	local ctx = state.ctx
 	if state.view == V.ALL_PROJECTS then
@@ -242,6 +276,8 @@ local function render_current()
 		local proj = find_project(ctx.project_id)
 		local task = proj and find_task_anywhere(proj, ctx.task_id)
 		return task and render_single_task(task, proj) or { "(task not found)" }
+	elseif state.view == V.COMPLETED then
+		return render_completed()
 	end
 	return {}
 end
@@ -281,9 +317,28 @@ function M.full_lines()
 	return out
 end
 
+function M.current_view()
+	return state.view
+end
+
+--- Push COMPLETED view onto the history stack.
+--- After this, <BS> (nav.back()) will return to the previous view.
+function M.enter_completed()
+	table.insert(state.history, { view = state.view, ctx = vim.deepcopy(state.ctx) })
+	state.view      = V.COMPLETED
+	state.ctx       = {}
+	state.collapsed = false
+	return render_completed()
+end
+
 function M.enter(buf)
 	local item = cursor_item(buf)
 	state.collapsed = false
+
+	-- In COMPLETED view <CR> does nothing (no drill-down)
+	if state.view == V.COMPLETED then
+		return nil
+	end
 
 	local function push(new_view, new_ctx)
 		table.insert(state.history, { view = state.view, ctx = vim.deepcopy(state.ctx) })
@@ -362,6 +417,7 @@ function M.label()
 		[V.SINGLE_PROJECT] = "Project",
 		[V.SINGLE_SECTION] = "Section",
 		[V.SINGLE_TASK]    = "Task",
+		[V.COMPLETED]      = "Completed",
 	}
 	return labels[state.view] or state.view
 end
