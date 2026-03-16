@@ -207,7 +207,7 @@ local function toggle_restore_mark(buf)
 		vim.notify("Unmarked: " .. task_id, vim.log.levels.INFO, { title = "todoist-nvim" })
 	else
 		pending_restores[task_id] = true
-		new_line = "[r] " .. clean_line
+		new_line = "[ ] " .. clean_line
 		vim.notify("Marked for restore: " .. task_id, vim.log.levels.INFO, { title = "todoist-nvim" })
 	end
 
@@ -230,7 +230,11 @@ local function sync_restores()
 	end
 	local ids = vim.tbl_keys(pending_restores)
 	if #ids == 0 then
-		vim.notify("No tasks marked for restore. Use x to mark tasks first.", vim.log.levels.WARN, { title = "todoist-nvim" })
+		vim.notify(
+			"No tasks marked for restore. Use x to mark tasks first.",
+			vim.log.levels.WARN,
+			{ title = "todoist-nvim" }
+		)
 		return
 	end
 	vim.notify("Restoring " .. #ids .. " task(s)…", vim.log.levels.INFO, { title = "todoist-nvim" })
@@ -262,7 +266,11 @@ local function sync_restores()
 					pending_restores = {}
 					vim.schedule(function()
 						if failed == 0 then
-							vim.notify("All " .. #ids .. " task(s) restored!", vim.log.levels.INFO, { title = "todoist-nvim" })
+							vim.notify(
+								"All " .. #ids .. " task(s) restored!",
+								vim.log.levels.INFO,
+								{ title = "todoist-nvim" }
+							)
 						end
 						vim.defer_fn(function()
 							M.completed()
