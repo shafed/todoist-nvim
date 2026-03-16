@@ -91,10 +91,13 @@ local function set_conceal(buf)
 	local guard_id = vim.api.nvim_create_autocmd({ "BufEnter", "BufWinEnter", "WinEnter" }, {
 		buffer = buf,
 		callback = function()
-			local w = vim.fn.bufwinid(buf)
-			if w ~= -1 then
-				apply(w)
-			end
+			-- defer to run after render-markdown which may reset conceallevel
+			vim.defer_fn(function()
+				local w = vim.fn.bufwinid(buf)
+				if w ~= -1 then
+					apply(w)
+				end
+			end, 50)
 		end,
 	})
 	vim.api.nvim_create_autocmd("BufDelete", {
@@ -177,6 +180,7 @@ end
 -- ─── Toggle restore mark (completed buffer) ──────────────────────────────────────────
 
 --- Mark/unmark a completed task for batch restore. Does NOT call the API.
+--- Toggles - [x] ↔ - [ ] visually to indicate selection.
 local function toggle_restore_mark(buf)
 	local cur_win = vim.api.nvim_get_current_win()
 	local win
@@ -200,12 +204,12 @@ local function toggle_restore_mark(buf)
 
 	local new_line
 	if pending_restores[task_id] then
-		-- снять пометку: вернуть [ ] → [x]
+		-- unmark: restore [x]
 		pending_restores[task_id] = nil
 		new_line = line:gsub("%- %[ %]", "- [x]", 1)
 		vim.notify("Unmarked: " .. task_id, vim.log.levels.INFO, { title = "todoist-nvim" })
 	else
-		-- поставить пометку: заменить [x] → [ ]
+		-- mark: replace [x] with [ ] to indicate pending restore
 		pending_restores[task_id] = true
 		new_line = line:gsub("%- %[x%]", "- [ ]", 1)
 		vim.notify("Marked for restore: " .. task_id, vim.log.levels.INFO, { title = "todoist-nvim" })
@@ -354,6 +358,8 @@ end
 -- ─── Treesitter highlighting ────────────────────────────────────────────────────────────
 
 local function start_treesitter(buf)
+	-- Register before starting so render-markdown and treesitter use markdown parser
+	vim.treesitter.language.register("markdown", "todoist")
 	local ok, _ = pcall(vim.treesitter.start, buf, "markdown")
 	if not ok then
 		vim.api.nvim_buf_call(buf, function()
@@ -588,6 +594,12 @@ end
 
 function M.setup(opts)
 	opts = opts or {}
+
+	-- Integrate with render-markdown.nvim if installed
+	local ok, render_md = pcall(require, "render-markdown")
+	if ok then
+		render_md.setup({ file_types = { "markdown", "todoist" } })
+	end
 
 	vim.api.nvim_create_user_command("TodoistOpen", function()
 		M.open()
