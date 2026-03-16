@@ -589,25 +589,6 @@ end
 function M.setup(opts)
 	opts = opts or {}
 
-	-- Интегрируемся с render-markdown.nvim если он установлен
-	local ok, render_md = pcall(require, "render-markdown")
-	if ok then
-		local current = render_md.config or {}
-		local ft = current.file_types or { "markdown" }
-		-- Добавляем "todoist" если ещё нет
-		local has_todoist = false
-		for _, v in ipairs(ft) do
-			if v == "todoist" then
-				has_todoist = true
-				break
-			end
-		end
-		if not has_todoist then
-			table.insert(ft, "todoist")
-			render_md.setup({ file_types = ft })
-		end
-	end
-
 	vim.api.nvim_create_user_command("TodoistOpen", function()
 		M.open()
 	end, { desc = "Open active Todoist tasks", nargs = 0 })
