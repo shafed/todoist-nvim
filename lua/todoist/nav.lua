@@ -4,7 +4,7 @@
 
 local M = {}
 
--- ─── View constants ──────────────────────────────────────────────────────────
+-- ─── View constants ───────────────────────────────────────────────────────────
 
 M.VIEW = {
 	ALL_PROJECTS  = "all_projects",
@@ -17,17 +17,17 @@ local V = M.VIEW
 -- ─── State ───────────────────────────────────────────────────────────────────
 
 local state = {
-	view     = V.ALL_PROJECTS,
-	history  = {},
-	ctx      = {},
+	view      = V.ALL_PROJECTS,
+	history   = {},
+	ctx       = {},
 	collapsed = false,
 }
 
--- ─── Data cache ──────────────────────────────────────────────────────────────
+-- ─── Data cache ───────────────────────────────────────────────────────────────
 
 local cache = { projects = {} }
 
--- ─── Parsing helpers ─────────────────────────────────────────────────────────
+-- ─── Parsing helpers ──────────────────────────────────────────────────────────
 
 local function extract_id(line, key)
 	return line:match("<!%-%- " .. key .. ":(%S-) %-%->")
@@ -41,7 +41,7 @@ local function leading_spaces(line)
 	return #(line:match("^(%s*)"))
 end
 
--- ─── Hierarchy loader ────────────────────────────────────────────────────────
+-- ─── Hierarchy loader ─────────────────────────────────────────────────────────
 
 function M.load(lines)
 	local projects = {}
@@ -71,13 +71,7 @@ function M.load(lines)
 			local content = strip_comment(raw)
 			local indent  = leading_spaces(line)
 			if tid and cur_proj then
-				local task = {
-					id       = tid,
-					content  = content,
-					checked  = checked,
-					indent   = indent,
-					subtasks = {},
-				}
+				local task = { id = tid, content = content, checked = checked, indent = indent, subtasks = {} }
 				if indent == 0 then
 					local tbl = cur_sec and cur_sec.tasks or cur_proj.tasks
 					table.insert(tbl, task)
@@ -103,7 +97,7 @@ function M.load(lines)
 	cache.projects = projects
 end
 
--- ─── Finders ─────────────────────────────────────────────────────────────────
+-- ─── Finders ──────────────────────────────────────────────────────────────────
 
 local function find_project(pid)
 	for _, p in ipairs(cache.projects) do
@@ -264,12 +258,12 @@ local function cursor_item(buf)
 	}
 end
 
--- ─── Public API ───────────────────────────────────────────────────────────────
+-- ─── Public navigation API ────────────────────────────────────────────────────
 
 function M.reset()
-	state.view     = V.ALL_PROJECTS
-	state.history  = {}
-	state.ctx      = {}
+	state.view      = V.ALL_PROJECTS
+	state.history   = {}
+	state.ctx       = {}
 	state.collapsed = false
 end
 
@@ -277,13 +271,13 @@ function M.lines()
 	return render_current()
 end
 
---- Returns ALL tasks from ALL projects, regardless of current nav view.
---- Used by sync() so the diff sees the full picture and won't delete unseen tasks.
+--- Returns ALL projects/sections/tasks as a flat buffer — used by sync().
+--- Never changes navigation state. Always renders uncollapsed.
 function M.full_lines()
-	local saved_collapsed = state.collapsed
+	local saved = state.collapsed
 	state.collapsed = false
 	local out = render_all_projects()
-	state.collapsed = saved_collapsed
+	state.collapsed = saved
 	return out
 end
 
@@ -345,9 +339,9 @@ end
 
 function M.back()
 	if #state.history == 0 then return nil end
-	local prev = table.remove(state.history)
-	state.view     = prev.view
-	state.ctx      = prev.ctx
+	local prev      = table.remove(state.history)
+	state.view      = prev.view
+	state.ctx       = prev.ctx
 	state.collapsed = false
 	return render_current()
 end
