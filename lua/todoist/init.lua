@@ -1,4 +1,4 @@
--- lua/todoist.lua  v0.4
+-- lua/todoist.lua  v0.5
 --
 -- Commands:
 --   :TodoistOpen      → active tasks buffer
@@ -23,23 +23,22 @@ local M = {}
 -- ─── Namespace ─────────────────────────────────────────────────────────────────────────
 local NS = vim.api.nvim_create_namespace("todoist_meta")
 
--- ─── Default checkbox config (mirrors render-markdown style) ───────────────────────
+-- ─── Default checkbox config ───────────────────────────────────────────────────────────
 local CHECKBOX = {
 	unchecked = {
-		icon            = "☐",    -- replace with "" if using Nerd Fonts
+		icon            = "",   -- same as render-markdown default (nf-fa-square_o)
 		highlight       = "TodoistUnchecked",
-		scope_highlight = nil,    -- e.g. "TodoistUncheckedLine"
+		scope_highlight = nil,
 	},
 	checked = {
-		icon            = "☑",    -- replace with "" if using Nerd Fonts
+		icon            = "",   -- same as render-markdown default (nf-fa-check_square)
 		highlight       = "TodoistChecked",
-		scope_highlight = nil,    -- e.g. "TodoistCheckedLine"
+		scope_highlight = nil,
 	},
 	-- Custom states: { raw = "[-]", icon = "…", highlight = "…", scope_highlight = nil }
 	custom = {},
 }
 
--- utf-8 character width helper (single codepoint, not full grapheme cluster)
 local function char_width(s)
 	return vim.fn.strdisplaywidth(s)
 end
@@ -55,52 +54,50 @@ end
 
 -- ─── Core checkbox renderer ────────────────────────────────────────────────────────────
 --
--- Renders one checkbox into the buffer at (lnum-1, col_s .. col_e) [0-indexed].
--- raw_text  : original text being replaced, e.g. "[ ]" or "[x]" (WITHOUT the leading "- ")
--- cfg       : { icon, highlight, scope_highlight }
--- is_cursor : if true, skip conceal so the raw text stays visible
--- line      : full line string (needed for scope_highlight end-col)
+-- Conceals the "- " marker before the checkbox, then renders the icon
+-- using overlay+inline exactly like render-markdown.
+--
+-- marker_col : 0-indexed column of "-" (the list marker)
+-- col_s      : 0-indexed start of the raw checkbox text (e.g. "[ ]")
+-- col_e      : 0-indexed end   of the raw checkbox text (exclusive)
+-- cfg        : { icon, highlight, scope_highlight }
+-- is_cursor  : skip all rendering on cursor line (show raw text)
+-- line       : full line string
 
-local function render_checkbox(buf, lnum0, col_s, col_e, raw_text, cfg, is_cursor)
-	if is_cursor then
-		-- cursor line: no conceal, no overlay – show raw text as-is
-		return
-	end
+local function render_checkbox(buf, lnum0, marker_col, col_s, col_e, cfg, is_cursor)
+	if is_cursor then return end
 
-	local icon      = cfg.icon
-	local hl        = cfg.highlight
-	local icon_w    = char_width(icon)
-	local raw_w     = col_e - col_s   -- byte width == display width for ASCII [ ] [x]
+	-- 1. Conceal the "- " list marker (render-markdown Render:marker())
+	vim.api.nvim_buf_set_extmark(buf, NS, lnum0, marker_col, {
+		end_col = col_s,   -- covers "- " (marker + space)
+		conceal = "",
+	})
+
+	-- 2. Render icon over "[ ]" / "[x]" (render-markdown Render:checkbox())
+	local icon   = cfg.icon
+	local hl     = cfg.highlight
+	local icon_w = char_width(icon)
+	local raw_w  = col_e - col_s
 
 	if icon_w <= raw_w then
-		-- icon fits within original span:
-		-- overlay the first icon_w columns, conceal any remaining chars
 		vim.api.nvim_buf_set_extmark(buf, NS, lnum0, col_s, {
 			end_col       = col_s + icon_w,
 			virt_text     = { { icon, hl } },
 			virt_text_pos = "overlay",
 		})
 		if icon_w < raw_w then
-			-- conceal leftover characters after icon
 			vim.api.nvim_buf_set_extmark(buf, NS, lnum0, col_s + icon_w, {
 				end_col = col_e,
 				conceal = "",
 			})
 		end
 	else
-		-- icon is wider than raw span:
-		-- overlay the raw span with the first raw_w chars of icon
-		-- (we use the full icon string; overlay truncates visually at end_col)
+		-- icon wider than raw span: overlay + inline tail
 		vim.api.nvim_buf_set_extmark(buf, NS, lnum0, col_s, {
 			end_col       = col_e,
 			virt_text     = { { icon, hl } },
 			virt_text_pos = "overlay",
 		})
-		-- append the overflow inline after col_e
-		-- (render-markdown uses a second virt_text inline for the tail)
-		local tail_icon = icon  -- Neovim overlay already shows full icon; inline is a no-op
-								-- but we add it so width is correct for environments
-								-- that clip overlay at end_col
 		vim.api.nvim_buf_set_extmark(buf, NS, lnum0, col_e, {
 			virt_text     = { { string.rep(" ", icon_w - raw_w), hl } },
 			virt_text_pos = "inline",
@@ -146,10 +143,6 @@ local function find_buf(name)
 end
 
 -- ─── apply_extmark_conceal ────────────────────────────────────────────────────────────
---
--- cursor_line (1-based, optional): checkbox rendering is skipped on this line
--- so the user sees raw "- [ ]" while editing.
--- <!--id--> metadata comments are ALWAYS concealed.
 
 local function apply_extmark_conceal(buf, cursor_line)
 	vim.api.nvim_buf_clear_namespace(buf, NS, 0, -1)
@@ -171,22 +164,21 @@ local function apply_extmark_conceal(buf, cursor_line)
 		-- 2. Try custom states first (e.g. [-], [~])
 		local matched_custom = false
 		for _, custom in ipairs(CHECKBOX.custom) do
-			-- raw is like "[-]" — escape for pattern
 			local escaped = vim.pesc(custom.raw)
-			local pat = "%- " .. escaped
-			local cs, ce = line:find(pat)
-			if cs and ce then
+			local pat = "()%- ()" .. escaped .. "()"
+			local marker_col, cb_start, cb_end = line:match(pat)
+			if marker_col then
 				matched_custom = true
-				-- col_s/col_e point at just the raw part (after "- ")
-				local col_s = cs + 2 - 1  -- 0-indexed, skip "- "
-				local col_e = ce
-				render_checkbox(buf, lnum0, col_s, col_e, custom.raw, custom, is_cursor)
-				-- scope highlight
+				render_checkbox(buf, lnum0,
+					marker_col - 1,   -- 0-indexed col of "-"
+					cb_start   - 1,   -- 0-indexed start of raw (after "- ")
+					cb_end     - 1,   -- 0-indexed end
+					custom, is_cursor)
 				if not is_cursor and custom.scope_highlight then
 					vim.api.nvim_buf_set_extmark(buf, NS, lnum0, 0, {
-						end_col    = #line,
-						hl_group   = custom.scope_highlight,
-						priority   = 90,
+						end_col  = #line,
+						hl_group = custom.scope_highlight,
+						priority = 90,
 					})
 				end
 				break
@@ -195,12 +187,10 @@ local function apply_extmark_conceal(buf, cursor_line)
 
 		if not matched_custom then
 			-- 3a. Unchecked: "- [ ]"
-			local us, ue = line:find("%- %[ %]")
-			if us and ue then
-				-- col of "[ ]" (skip "- ")
-				local col_s = us + 2 - 1
-				local col_e = ue
-				render_checkbox(buf, lnum0, col_s, col_e, "[ ]", CHECKBOX.unchecked, is_cursor)
+			-- capture positions: marker="-", space, "[ ]"
+			local mc, cs, ce = line:match("()%- ()%[ %]()")  -- mc=col of "-", cs=col of "[", ce=after "]"
+			if mc then
+				render_checkbox(buf, lnum0, mc - 1, cs - 1, ce - 1, CHECKBOX.unchecked, is_cursor)
 				if not is_cursor and CHECKBOX.unchecked.scope_highlight then
 					vim.api.nvim_buf_set_extmark(buf, NS, lnum0, 0, {
 						end_col  = #line,
@@ -211,11 +201,9 @@ local function apply_extmark_conceal(buf, cursor_line)
 			end
 
 			-- 3b. Checked: "- [x]" / "- [X]"
-			local xs, xe = line:find("%- %[[xX]%]")
-			if xs and xe then
-				local col_s = xs + 2 - 1
-				local col_e = xe
-				render_checkbox(buf, lnum0, col_s, col_e, "[x]", CHECKBOX.checked, is_cursor)
+			local mc2, cs2, ce2 = line:match("()%- ()%[[xX]%]()")  -- same pattern
+			if mc2 then
+				render_checkbox(buf, lnum0, mc2 - 1, cs2 - 1, ce2 - 1, CHECKBOX.checked, is_cursor)
 				if not is_cursor and CHECKBOX.checked.scope_highlight then
 					vim.api.nvim_buf_set_extmark(buf, NS, lnum0, 0, {
 						end_col  = #line,
@@ -250,7 +238,6 @@ local function set_conceal(buf)
 	})
 end
 
--- CursorMoved: re-render with cursor_line so current row shows raw text
 local function setup_cursor_conceal(buf)
 	vim.api.nvim_create_autocmd("CursorMoved", {
 		buffer = buf,
@@ -422,10 +409,10 @@ end
 
 local function setup_active_keymaps(buf)
 	local o = { buffer = buf, noremap = true, silent = true }
-	vim.keymap.set("n", "q",             "<cmd>bdelete<cr>",            vim.tbl_extend("force", o, { desc = "Close" }))
-	vim.keymap.set("n", "<C-r>",         function() M.open() end,       vim.tbl_extend("force", o, { desc = "Refresh" }))
-	vim.keymap.set("n", "<localleader>s",function() M.sync() end,       vim.tbl_extend("force", o, { desc = "Sync → Todoist" }))
-	vim.keymap.set("n", "<localleader>c",function() M.completed() end,  vim.tbl_extend("force", o, { desc = "Open Completed" }))
+	vim.keymap.set("n", "q",              "<cmd>bdelete<cr>",            vim.tbl_extend("force", o, { desc = "Close" }))
+	vim.keymap.set("n", "<C-r>",          function() M.open() end,       vim.tbl_extend("force", o, { desc = "Refresh" }))
+	vim.keymap.set("n", "<localleader>s", function() M.sync() end,       vim.tbl_extend("force", o, { desc = "Sync → Todoist" }))
+	vim.keymap.set("n", "<localleader>c", function() M.completed() end,  vim.tbl_extend("force", o, { desc = "Open Completed" }))
 	vim.keymap.set("n", "<CR>", function() nav_redraw(buf, nav.enter(buf)) end, vim.tbl_extend("force", o, { desc = "Navigate deeper" }))
 	vim.keymap.set("n", "<BS>", function() nav_redraw(buf, nav.back()) end,     vim.tbl_extend("force", o, { desc = "Navigate up" }))
 	vim.keymap.set("n", "zf",  function() nav_redraw(buf, nav.fold()) end,     vim.tbl_extend("force", o, { desc = "Collapse" }))
@@ -444,11 +431,11 @@ end
 
 local function setup_completed_keymaps(buf)
 	local o = { buffer = buf, noremap = true, silent = true }
-	vim.keymap.set("n", "q",             "<cmd>bdelete<cr>",            vim.tbl_extend("force", o, { desc = "Close" }))
-	vim.keymap.set("n", "r",             function() M.completed() end,  vim.tbl_extend("force", o, { desc = "Refresh" }))
-	vim.keymap.set("n", "<C-r>",         function() M.completed() end,  vim.tbl_extend("force", o, { desc = "Refresh" }))
-	vim.keymap.set("n", "x",             function() toggle_restore_mark(buf) end, vim.tbl_extend("force", o, { desc = "Mark/unmark for restore" }))
-	vim.keymap.set("n", "<localleader>s",function() sync_restores() end, vim.tbl_extend("force", o, { desc = "Sync restores" }))
+	vim.keymap.set("n", "q",              "<cmd>bdelete<cr>",            vim.tbl_extend("force", o, { desc = "Close" }))
+	vim.keymap.set("n", "r",              function() M.completed() end,  vim.tbl_extend("force", o, { desc = "Refresh" }))
+	vim.keymap.set("n", "<C-r>",          function() M.completed() end,  vim.tbl_extend("force", o, { desc = "Refresh" }))
+	vim.keymap.set("n", "x",              function() toggle_restore_mark(buf) end, vim.tbl_extend("force", o, { desc = "Mark/unmark for restore" }))
+	vim.keymap.set("n", "<localleader>s", function() sync_restores() end, vim.tbl_extend("force", o, { desc = "Sync restores" }))
 end
 
 -- ─── open() ──────────────────────────────────────────────────────────────────────
@@ -638,11 +625,10 @@ end
 
 -- ─── setup() ─────────────────────────────────────────────────────────────────────
 
---- Config mirrors render-markdown.nvim's checkbox config:
----
+--- Config:
 ---   checkbox = {
----     unchecked = { icon = "☐", highlight = "TodoistUnchecked", scope_highlight = nil },
----     checked   = { icon = "☑", highlight = "TodoistChecked",   scope_highlight = "TodoistCheckedLine" },
+---     unchecked = { icon = "", highlight = "TodoistUnchecked", scope_highlight = nil },
+---     checked   = { icon = "", highlight = "TodoistChecked",   scope_highlight = "TodoistCheckedLine" },
 ---     custom    = {
 ---       { raw = "[-]", icon = "⌛", highlight = "TodoistTodo", scope_highlight = nil },
 ---     },
