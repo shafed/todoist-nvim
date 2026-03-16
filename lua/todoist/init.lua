@@ -25,12 +25,12 @@ local NS = vim.api.nvim_create_namespace("todoist_meta")
 
 -- ─── Checkbox icons ───────────────────────────────────────────────────────────────────
 local ICON_UNCHECKED = "☐" -- or "" with Nerd Fonts
-local ICON_CHECKED   = "☑" -- or "" with Nerd Fonts
+local ICON_CHECKED = "☑" -- or "" with Nerd Fonts
 
 -- Highlight groups for checkboxes.
 -- Falls back to Comment / String if user hasn't defined custom groups.
 local HL_UNCHECKED = "TodoistUnchecked"
-local HL_CHECKED   = "TodoistChecked"
+local HL_CHECKED = "TodoistChecked"
 
 local function ensure_highlights()
 	if vim.fn.hlexists(HL_UNCHECKED) == 0 then
@@ -612,12 +612,20 @@ function M.setup(opts)
 	opts = opts or {}
 
 	if opts.icons then
-		if opts.icons.unchecked then ICON_UNCHECKED = opts.icons.unchecked end
-		if opts.icons.checked   then ICON_CHECKED   = opts.icons.checked   end
+		if opts.icons.unchecked then
+			ICON_UNCHECKED = opts.icons.unchecked
+		end
+		if opts.icons.checked then
+			ICON_CHECKED = opts.icons.checked
+		end
 	end
 	if opts.highlights then
-		if opts.highlights.unchecked then HL_UNCHECKED = opts.highlights.unchecked end
-		if opts.highlights.checked   then HL_CHECKED   = opts.highlights.checked   end
+		if opts.highlights.unchecked then
+			HL_UNCHECKED = opts.highlights.unchecked
+		end
+		if opts.highlights.checked then
+			HL_CHECKED = opts.highlights.checked
+		end
 	end
 
 	vim.api.nvim_create_user_command("TodoistOpen", function()
