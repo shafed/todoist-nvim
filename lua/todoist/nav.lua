@@ -30,8 +30,9 @@ local cache = { projects = {}, completed = {} }
 
 -- ─── Parsing helpers ──────────────────────────────────────────────────────────
 
+-- Matches <!-- key:VALUE --> where VALUE ends at first space or -->
 local function extract_id(line, key)
-	return line:match("<!%-%- " .. key .. ":(%S-) %-%->")
+	return line:match("<!%-%- " .. key .. ":(%S+)")
 end
 
 local function strip_comment(s)
@@ -99,9 +100,9 @@ function M.load(lines)
 end
 
 -- ─── Completed loader ─────────────────────────────────────────────────────────
--- Expects lines in the same markdown format produced by `binary completed`:
---   - [x] Task content <!-- id:XXXX -->
--- Optionally a date comment like <!-- completed:2024-01-15 --> is preserved.
+-- Binary outputs: - [x] Task content <!-- id:XXXX completed:DATE -->
+-- extract_id now grabs the first non-space token after "id:", so it works
+-- regardless of what follows (completed:DATE or nothing).
 
 function M.load_completed(lines)
 	local tasks = {}
@@ -307,8 +308,6 @@ function M.lines()
 	return render_current()
 end
 
---- Returns ALL projects/sections/tasks as a flat buffer — used by sync().
---- Never changes navigation state. Always renders uncollapsed.
 function M.full_lines()
 	local saved = state.collapsed
 	state.collapsed = false
@@ -321,8 +320,6 @@ function M.current_view()
 	return state.view
 end
 
---- Push COMPLETED view onto the history stack.
---- After this, <BS> (nav.back()) will return to the previous view.
 function M.enter_completed()
 	table.insert(state.history, { view = state.view, ctx = vim.deepcopy(state.ctx) })
 	state.view      = V.COMPLETED
@@ -335,7 +332,6 @@ function M.enter(buf)
 	local item = cursor_item(buf)
 	state.collapsed = false
 
-	-- In COMPLETED view <CR> does nothing (no drill-down)
 	if state.view == V.COMPLETED then
 		return nil
 	end
