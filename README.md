@@ -9,11 +9,11 @@ and two-way sync.
 ```
 
 ```
-  Fix authentication bug
-    Write test
-    Deploy patch
-  Upgrade staging server
-  Buy groceries
+- [ ] Fix authentication bug
+  - [ ]  Write test
+  - [ ]  Deploy patch
+-[x] Upgrade staging server
+- [ ]  Buy groceries
 ```
 
 > **API version**: This plugin targets the
@@ -25,9 +25,12 @@ and two-way sync.
 ## Features
 
 - ✅ Fetches all active tasks grouped by **project → section → task → subtask**
-- ✅ Checkbox icons rendered via extmarks — same icons as [render-markdown.nvim](https://github.com/MeanderingProgrammer/render-markdown.nvim) (`` / ``)
+- ✅ Checkbox icons rendered via extmarks — same icons as
+  [render-markdown.nvim](https://github.com/MeanderingProgrammer/render-markdown.nvim)
+  (`` / ``)
 - ✅ `- ` list marker and `<!--id:...-->` metadata concealed automatically
-- ✅ Markdown Tree-sitter highlighting (headings, bold, etc.) injected without changing `filetype`
+- ✅ Markdown Tree-sitter highlighting (headings, bold, etc.) injected without
+  changing `filetype`
 - ✅ Toggle task complete with `x` and sync to Todoist with `<localleader>s`
 - ✅ Completed tasks browser (`:TodoistCompleted`) with one-click restore
 - ✅ Cursor line shows raw text for easy editing; all other lines are rendered
@@ -99,9 +102,12 @@ Projects with zero active tasks are omitted.
 
 - Neovim 0.9+
 - Rust toolchain (`cargo`) — one-time build step
-- [nvim-treesitter](https://github.com/nvim-treesitter/nvim-treesitter) with the `markdown` parser installed
-- A [Todoist API token](https://app.todoist.com/app/settings/integrations/developer)
-- A [Nerd Font](https://www.nerdfonts.com/) in your terminal (for checkbox icons)
+- [nvim-treesitter](https://github.com/nvim-treesitter/nvim-treesitter) with the
+  `markdown` parser installed
+- A
+  [Todoist API token](https://app.todoist.com/app/settings/integrations/developer)
+- A [Nerd Font](https://www.nerdfonts.com/) in your terminal (for checkbox
+  icons)
 
 ---
 
@@ -155,34 +161,34 @@ cargo build --release
 
 ### Commands
 
-| Command              | Effect                                          |
-| -------------------- | ----------------------------------------------- |
-| `:TodoistOpen`       | Fetch active tasks and open the buffer          |
-| `:TodoistCompleted`  | Open completed tasks (last 30 days)             |
-| `:TodoistSync`       | Sync buffer changes → Todoist                   |
-| `:TodoistRestore`    | Restore completed task under cursor             |
+| Command             | Effect                                 |
+| ------------------- | -------------------------------------- |
+| `:TodoistOpen`      | Fetch active tasks and open the buffer |
+| `:TodoistCompleted` | Open completed tasks (last 30 days)    |
+| `:TodoistSync`      | Sync buffer changes → Todoist          |
+| `:TodoistRestore`   | Restore completed task under cursor    |
 
 ### Keymaps (active buffer)
 
-| Key                 | Effect                              |
-| ------------------- | ----------------------------------- |
-| `x`                 | Toggle task complete (`[ ]` ↔ `[x]`) |
-| `<localleader>s`    | Sync to Todoist                     |
-| `<localleader>c`    | Open completed tasks buffer         |
-| `<CR>`              | Navigate deeper (project/section)   |
-| `<BS>`              | Navigate up                         |
-| `zf` / `zu`         | Fold / unfold                       |
-| `r` / `<C-r>`       | Refresh                             |
-| `q`                 | Close buffer                        |
+| Key              | Effect                               |
+| ---------------- | ------------------------------------ |
+| `x`              | Toggle task complete (`[ ]` ↔ `[x]`) |
+| `<localleader>s` | Sync to Todoist                      |
+| `<localleader>c` | Open completed tasks buffer          |
+| `<CR>`           | Navigate deeper (project/section)    |
+| `<BS>`           | Navigate up                          |
+| `zf` / `zu`      | Fold / unfold                        |
+| `r` / `<C-r>`    | Refresh                              |
+| `q`              | Close buffer                         |
 
 ### Keymaps (completed buffer)
 
-| Key                 | Effect                              |
-| ------------------- | ----------------------------------- |
-| `x`                 | Mark / unmark task for restore      |
-| `<localleader>s`    | Sync restores to Todoist            |
-| `r` / `<C-r>`       | Refresh                             |
-| `q`                 | Close buffer                        |
+| Key              | Effect                         |
+| ---------------- | ------------------------------ |
+| `x`              | Mark / unmark task for restore |
+| `<localleader>s` | Sync restores to Todoist       |
+| `r` / `<C-r>`    | Refresh                        |
+| `q`              | Close buffer                   |
 
 ---
 
@@ -210,7 +216,9 @@ require("todoist").setup({
 })
 ```
 
-The default icons match [render-markdown.nvim](https://github.com/MeanderingProgrammer/render-markdown.nvim) defaults and require a Nerd Font.
+The default icons match
+[render-markdown.nvim](https://github.com/MeanderingProgrammer/render-markdown.nvim)
+defaults and require a Nerd Font.
 
 ---
 
