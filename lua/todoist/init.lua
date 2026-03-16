@@ -226,7 +226,7 @@ local function setup_completed_keymaps(buf)
 	vim.keymap.set("n", "<C-r>", function()
 		M.completed()
 	end, vim.tbl_extend("force", o, { desc = "Refresh" }))
-	vim.keymap.set("n", "<localleader>r", function()
+	vim.keymap.set("n", "x", function()
 		M.restore_under_cursor(buf)
 	end, vim.tbl_extend("force", o, { desc = "Restore task" }))
 end
