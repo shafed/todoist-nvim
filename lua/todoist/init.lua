@@ -1,4 +1,4 @@
--- lua/todoist.lua  v0.3
+-- lua/todoist.lua  v0.4
 --
 -- Commands:
 --   :TodoistOpen      → active tasks buffer
@@ -20,28 +20,98 @@ local nav = require("todoist.nav")
 
 local M = {}
 
--- ─── Namespace for extmarks ─────────────────────────────────────────────────────────────────
+-- ─── Namespace ─────────────────────────────────────────────────────────────────────────
 local NS = vim.api.nvim_create_namespace("todoist_meta")
 
--- ─── Checkbox icons ───────────────────────────────────────────────────────────────────
-local ICON_UNCHECKED = "☐" -- or "" with Nerd Fonts
-local ICON_CHECKED   = "☑" -- or "" with Nerd Fonts
-local HL_UNCHECKED   = "TodoistUnchecked"
-local HL_CHECKED     = "TodoistChecked"
+-- ─── Default checkbox config (mirrors render-markdown style) ───────────────────────
+local CHECKBOX = {
+	unchecked = {
+		icon            = "☐",    -- replace with "" if using Nerd Fonts
+		highlight       = "TodoistUnchecked",
+		scope_highlight = nil,    -- e.g. "TodoistUncheckedLine"
+	},
+	checked = {
+		icon            = "☑",    -- replace with "" if using Nerd Fonts
+		highlight       = "TodoistChecked",
+		scope_highlight = nil,    -- e.g. "TodoistCheckedLine"
+	},
+	-- Custom states: { raw = "[-]", icon = "…", highlight = "…", scope_highlight = nil }
+	custom = {},
+}
+
+-- utf-8 character width helper (single codepoint, not full grapheme cluster)
+local function char_width(s)
+	return vim.fn.strdisplaywidth(s)
+end
 
 local function ensure_highlights()
-	if vim.fn.hlexists(HL_UNCHECKED) == 0 then
-		vim.api.nvim_set_hl(0, HL_UNCHECKED, { link = "Comment", default = true })
+	if vim.fn.hlexists("TodoistUnchecked") == 0 then
+		vim.api.nvim_set_hl(0, "TodoistUnchecked", { link = "Comment", default = true })
 	end
-	if vim.fn.hlexists(HL_CHECKED) == 0 then
-		vim.api.nvim_set_hl(0, HL_CHECKED, { link = "String", default = true })
+	if vim.fn.hlexists("TodoistChecked") == 0 then
+		vim.api.nvim_set_hl(0, "TodoistChecked", { link = "String", default = true })
+	end
+end
+
+-- ─── Core checkbox renderer ────────────────────────────────────────────────────────────
+--
+-- Renders one checkbox into the buffer at (lnum-1, col_s .. col_e) [0-indexed].
+-- raw_text  : original text being replaced, e.g. "[ ]" or "[x]" (WITHOUT the leading "- ")
+-- cfg       : { icon, highlight, scope_highlight }
+-- is_cursor : if true, skip conceal so the raw text stays visible
+-- line      : full line string (needed for scope_highlight end-col)
+
+local function render_checkbox(buf, lnum0, col_s, col_e, raw_text, cfg, is_cursor)
+	if is_cursor then
+		-- cursor line: no conceal, no overlay – show raw text as-is
+		return
+	end
+
+	local icon      = cfg.icon
+	local hl        = cfg.highlight
+	local icon_w    = char_width(icon)
+	local raw_w     = col_e - col_s   -- byte width == display width for ASCII [ ] [x]
+
+	if icon_w <= raw_w then
+		-- icon fits within original span:
+		-- overlay the first icon_w columns, conceal any remaining chars
+		vim.api.nvim_buf_set_extmark(buf, NS, lnum0, col_s, {
+			end_col       = col_s + icon_w,
+			virt_text     = { { icon, hl } },
+			virt_text_pos = "overlay",
+		})
+		if icon_w < raw_w then
+			-- conceal leftover characters after icon
+			vim.api.nvim_buf_set_extmark(buf, NS, lnum0, col_s + icon_w, {
+				end_col = col_e,
+				conceal = "",
+			})
+		end
+	else
+		-- icon is wider than raw span:
+		-- overlay the raw span with the first raw_w chars of icon
+		-- (we use the full icon string; overlay truncates visually at end_col)
+		vim.api.nvim_buf_set_extmark(buf, NS, lnum0, col_s, {
+			end_col       = col_e,
+			virt_text     = { { icon, hl } },
+			virt_text_pos = "overlay",
+		})
+		-- append the overflow inline after col_e
+		-- (render-markdown uses a second virt_text inline for the tail)
+		local tail_icon = icon  -- Neovim overlay already shows full icon; inline is a no-op
+								-- but we add it so width is correct for environments
+								-- that clip overlay at end_col
+		vim.api.nvim_buf_set_extmark(buf, NS, lnum0, col_e, {
+			virt_text     = { { string.rep(" ", icon_w - raw_w), hl } },
+			virt_text_pos = "inline",
+		})
 	end
 end
 
 -- ─── Pending restores state ────────────────────────────────────────────────────────────
 local pending_restores = {}
 
--- ─── Binary discovery ──────────────────────────────────────────────────────────────────
+-- ─── Binary discovery ─────────────────────────────────────────────────────────────────
 
 local function find_binary()
 	local this_file = debug.getinfo(1, "S").source:sub(2)
@@ -75,59 +145,94 @@ local function find_buf(name)
 	return nil
 end
 
--- ─── Extmark rendering ───────────────────────────────────────────────────────────────────
+-- ─── apply_extmark_conceal ────────────────────────────────────────────────────────────
 --
--- cursor_line (1-based): on that line checkboxes are shown as raw text.
--- <!--id--> comments are ALWAYS concealed regardless of cursor position.
+-- cursor_line (1-based, optional): checkbox rendering is skipped on this line
+-- so the user sees raw "- [ ]" while editing.
+-- <!--id--> metadata comments are ALWAYS concealed.
 
 local function apply_extmark_conceal(buf, cursor_line)
 	vim.api.nvim_buf_clear_namespace(buf, NS, 0, -1)
 	local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+
 	for lnum, line in ipairs(lines) do
-		-- Always conceal <!--id:...--> regardless of cursor
-		local s, e = line:find("%s*<!%-%-.*%-%->%s*")
-		if s and e then
-			vim.api.nvim_buf_set_extmark(buf, NS, lnum - 1, s - 1, {
-				end_col = e,
+		local lnum0     = lnum - 1
+		local is_cursor = (cursor_line ~= nil and lnum == cursor_line)
+
+		-- 1. Always conceal <!--id:...--> metadata
+		local ms, me = line:find("%s*<!%-%-.*%-%->%s*")
+		if ms and me then
+			vim.api.nvim_buf_set_extmark(buf, NS, lnum0, ms - 1, {
+				end_col = me,
 				conceal = "",
 			})
 		end
 
-		local is_cursor = (cursor_line ~= nil and lnum == cursor_line)
-
-		-- Unchecked: - [ ]
-		local us, ue = line:find("%- %[ %]")
-		if us and ue then
-			local mark = {
-				end_col = ue,
-				virt_text = { { ICON_UNCHECKED, HL_UNCHECKED } },
-				virt_text_pos = "inline",
-			}
-			if not is_cursor then mark.conceal = "" end
-			vim.api.nvim_buf_set_extmark(buf, NS, lnum - 1, us - 1, mark)
+		-- 2. Try custom states first (e.g. [-], [~])
+		local matched_custom = false
+		for _, custom in ipairs(CHECKBOX.custom) do
+			-- raw is like "[-]" — escape for pattern
+			local escaped = vim.pesc(custom.raw)
+			local pat = "%- " .. escaped
+			local cs, ce = line:find(pat)
+			if cs and ce then
+				matched_custom = true
+				-- col_s/col_e point at just the raw part (after "- ")
+				local col_s = cs + 2 - 1  -- 0-indexed, skip "- "
+				local col_e = ce
+				render_checkbox(buf, lnum0, col_s, col_e, custom.raw, custom, is_cursor)
+				-- scope highlight
+				if not is_cursor and custom.scope_highlight then
+					vim.api.nvim_buf_set_extmark(buf, NS, lnum0, 0, {
+						end_col    = #line,
+						hl_group   = custom.scope_highlight,
+						priority   = 90,
+					})
+				end
+				break
+			end
 		end
 
-		-- Checked: - [x]
-		local xs, xe = line:find("%- %[[xX]%]")
-		if xs and xe then
-			local mark = {
-				end_col = xe,
-				virt_text = { { ICON_CHECKED, HL_CHECKED } },
-				virt_text_pos = "inline",
-			}
-			if not is_cursor then mark.conceal = "" end
-			vim.api.nvim_buf_set_extmark(buf, NS, lnum - 1, xs - 1, mark)
+		if not matched_custom then
+			-- 3a. Unchecked: "- [ ]"
+			local us, ue = line:find("%- %[ %]")
+			if us and ue then
+				-- col of "[ ]" (skip "- ")
+				local col_s = us + 2 - 1
+				local col_e = ue
+				render_checkbox(buf, lnum0, col_s, col_e, "[ ]", CHECKBOX.unchecked, is_cursor)
+				if not is_cursor and CHECKBOX.unchecked.scope_highlight then
+					vim.api.nvim_buf_set_extmark(buf, NS, lnum0, 0, {
+						end_col  = #line,
+						hl_group = CHECKBOX.unchecked.scope_highlight,
+						priority = 90,
+					})
+				end
+			end
+
+			-- 3b. Checked: "- [x]" / "- [X]"
+			local xs, xe = line:find("%- %[[xX]%]")
+			if xs and xe then
+				local col_s = xs + 2 - 1
+				local col_e = xe
+				render_checkbox(buf, lnum0, col_s, col_e, "[x]", CHECKBOX.checked, is_cursor)
+				if not is_cursor and CHECKBOX.checked.scope_highlight then
+					vim.api.nvim_buf_set_extmark(buf, NS, lnum0, 0, {
+						end_col  = #line,
+						hl_group = CHECKBOX.checked.scope_highlight,
+						priority = 90,
+					})
+				end
+			end
 		end
 	end
 end
 
--- ─── conceallevel on the window ──────────────────────────────────────────────────────
+-- ─── conceallevel ──────────────────────────────────────────────────────────────────────
 
 local function set_conceal(buf)
 	local function apply(win)
-		vim.wo[win].conceallevel = 3
-		-- nvic: conceal active in all modes including normal on cursor line.
-		-- Checkbox conceal is handled per-line via CursorMoved instead.
+		vim.wo[win].conceallevel  = 3
 		vim.wo[win].concealcursor = "nvic"
 	end
 	local win = vim.fn.bufwinid(buf)
@@ -140,15 +245,12 @@ local function set_conceal(buf)
 		end,
 	})
 	vim.api.nvim_create_autocmd("BufDelete", {
-		buffer = buf,
-		once = true,
-		callback = function()
-			pcall(vim.api.nvim_del_autocmd, guard_id)
-		end,
+		buffer = buf, once = true,
+		callback = function() pcall(vim.api.nvim_del_autocmd, guard_id) end,
 	})
 end
 
--- Register CursorMoved so checkbox conceal is toggled for current line only
+-- CursorMoved: re-render with cursor_line so current row shows raw text
 local function setup_cursor_conceal(buf)
 	vim.api.nvim_create_autocmd("CursorMoved", {
 		buffer = buf,
@@ -164,10 +266,10 @@ end
 local function create_buf(name, is_readonly)
 	local buf = vim.api.nvim_create_buf(true, true)
 	vim.api.nvim_buf_set_name(buf, name)
-	vim.bo[buf].buftype  = "nofile"
+	vim.bo[buf].buftype   = "nofile"
 	vim.bo[buf].bufhidden = "hide"
-	vim.bo[buf].swapfile = false
-	vim.bo[buf].filetype = "todoist"
+	vim.bo[buf].swapfile  = false
+	vim.bo[buf].filetype  = "todoist"
 	if is_readonly then
 		vim.bo[buf].modifiable = false
 		vim.bo[buf].readonly   = true
@@ -238,7 +340,7 @@ local function toggle_restore_mark(buf)
 			return
 		end
 	end
-	local row = vim.api.nvim_win_get_cursor(win)[1]
+	local row  = vim.api.nvim_win_get_cursor(win)[1]
 	local line = vim.api.nvim_buf_get_lines(buf, row - 1, row, false)[1] or ""
 
 	local task_id = line:match("id:(%S+)")
@@ -276,22 +378,17 @@ local function sync_restores()
 	end
 	local ids = vim.tbl_keys(pending_restores)
 	if #ids == 0 then
-		vim.notify(
-			"No tasks marked for restore. Use x to mark tasks first.",
-			vim.log.levels.WARN,
-			{ title = "todoist-nvim" }
-		)
+		vim.notify("No tasks marked for restore. Use x to mark tasks first.",
+			vim.log.levels.WARN, { title = "todoist-nvim" })
 		return
 	end
 	vim.notify("Restoring " .. #ids .. " task(s)…", vim.log.levels.INFO, { title = "todoist-nvim" })
 
-	local done   = 0
-	local failed = 0
+	local done = 0; local failed = 0
 	for _, task_id in ipairs(ids) do
 		local err = {}
 		vim.fn.jobstart({ binary, "reopen", task_id }, {
-			stdout_buffered = true,
-			stderr_buffered = true,
+			stdout_buffered = true, stderr_buffered = true,
 			on_stderr = function(_, d) err = d end,
 			on_exit = function(_, code)
 				done = done + 1
@@ -299,22 +396,16 @@ local function sync_restores()
 					failed = failed + 1
 					local msg = table.concat(err, "\n"):gsub("%s+$", "")
 					vim.schedule(function()
-						vim.notify(
-							"Failed to restore " .. task_id .. ": " .. (msg ~= "" and msg or "exit " .. code),
-							vim.log.levels.ERROR,
-							{ title = "todoist-nvim" }
-						)
+						vim.notify("Failed to restore " .. task_id .. ": " .. (msg ~= "" and msg or "exit " .. code),
+							vim.log.levels.ERROR, { title = "todoist-nvim" })
 					end)
 				end
 				if done == #ids then
 					pending_restores = {}
 					vim.schedule(function()
 						if failed == 0 then
-							vim.notify(
-								"All " .. #ids .. " task(s) restored!",
-								vim.log.levels.INFO,
-								{ title = "todoist-nvim" }
-							)
+							vim.notify("All " .. #ids .. " task(s) restored!",
+								vim.log.levels.INFO, { title = "todoist-nvim" })
 						end
 						vim.defer_fn(function()
 							M.completed()
@@ -331,19 +422,15 @@ end
 
 local function setup_active_keymaps(buf)
 	local o = { buffer = buf, noremap = true, silent = true }
-
-	vim.keymap.set("n", "q",             "<cmd>bdelete<cr>", vim.tbl_extend("force", o, { desc = "Close" }))
-	vim.keymap.set("n", "<C-r>",         function() M.open() end,     vim.tbl_extend("force", o, { desc = "Refresh" }))
-	vim.keymap.set("n", "<localleader>s",function() M.sync() end,     vim.tbl_extend("force", o, { desc = "Sync → Todoist" }))
-	vim.keymap.set("n", "<localleader>c",function() M.completed() end,vim.tbl_extend("force", o, { desc = "Open Completed" }))
-
+	vim.keymap.set("n", "q",             "<cmd>bdelete<cr>",            vim.tbl_extend("force", o, { desc = "Close" }))
+	vim.keymap.set("n", "<C-r>",         function() M.open() end,       vim.tbl_extend("force", o, { desc = "Refresh" }))
+	vim.keymap.set("n", "<localleader>s",function() M.sync() end,       vim.tbl_extend("force", o, { desc = "Sync → Todoist" }))
+	vim.keymap.set("n", "<localleader>c",function() M.completed() end,  vim.tbl_extend("force", o, { desc = "Open Completed" }))
 	vim.keymap.set("n", "<CR>", function() nav_redraw(buf, nav.enter(buf)) end, vim.tbl_extend("force", o, { desc = "Navigate deeper" }))
 	vim.keymap.set("n", "<BS>", function() nav_redraw(buf, nav.back()) end,     vim.tbl_extend("force", o, { desc = "Navigate up" }))
 	vim.keymap.set("n", "zf",  function() nav_redraw(buf, nav.fold()) end,     vim.tbl_extend("force", o, { desc = "Collapse" }))
 	vim.keymap.set("n", "zu",  function() nav_redraw(buf, nav.unfold()) end,   vim.tbl_extend("force", o, { desc = "Expand" }))
-
-	vim.keymap.set("n", "x", function() toggle_complete(buf) end, vim.tbl_extend("force", o, { desc = "Toggle task complete" }))
-
+	vim.keymap.set("n", "x",   function() toggle_complete(buf) end,            vim.tbl_extend("force", o, { desc = "Toggle task complete" }))
 	vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
 		buffer = buf,
 		callback = function()
@@ -357,9 +444,9 @@ end
 
 local function setup_completed_keymaps(buf)
 	local o = { buffer = buf, noremap = true, silent = true }
-	vim.keymap.set("n", "q",             "<cmd>bdelete<cr>",           vim.tbl_extend("force", o, { desc = "Close" }))
-	vim.keymap.set("n", "r",             function() M.completed() end, vim.tbl_extend("force", o, { desc = "Refresh" }))
-	vim.keymap.set("n", "<C-r>",         function() M.completed() end, vim.tbl_extend("force", o, { desc = "Refresh" }))
+	vim.keymap.set("n", "q",             "<cmd>bdelete<cr>",            vim.tbl_extend("force", o, { desc = "Close" }))
+	vim.keymap.set("n", "r",             function() M.completed() end,  vim.tbl_extend("force", o, { desc = "Refresh" }))
+	vim.keymap.set("n", "<C-r>",         function() M.completed() end,  vim.tbl_extend("force", o, { desc = "Refresh" }))
 	vim.keymap.set("n", "x",             function() toggle_restore_mark(buf) end, vim.tbl_extend("force", o, { desc = "Mark/unmark for restore" }))
 	vim.keymap.set("n", "<localleader>s",function() sync_restores() end, vim.tbl_extend("force", o, { desc = "Sync restores" }))
 end
@@ -386,18 +473,14 @@ end
 function M.open()
 	local binary = find_binary()
 	if not binary then
-		vim.notify(
-			"todoist-nvim: binary not found. Run: cargo build --release",
-			vim.log.levels.ERROR,
-			{ title = "todoist-nvim" }
-		)
+		vim.notify("todoist-nvim: binary not found. Run: cargo build --release",
+			vim.log.levels.ERROR, { title = "todoist-nvim" })
 		return
 	end
 	vim.notify("Fetching tasks…", vim.log.levels.INFO, { title = "todoist-nvim" })
 	local out, err = {}, {}
 	vim.fn.jobstart({ binary, "fetch" }, {
-		stdout_buffered = true,
-		stderr_buffered = true,
+		stdout_buffered = true, stderr_buffered = true,
 		on_stdout = function(_, d) out = d end,
 		on_stderr = function(_, d) err = d end,
 		on_exit = function(_, code)
@@ -440,8 +523,7 @@ function M.completed()
 	vim.notify("Fetching completed tasks…", vim.log.levels.INFO, { title = "todoist-nvim" })
 	local out, err = {}, {}
 	vim.fn.jobstart({ binary, "completed" }, {
-		stdout_buffered = true,
-		stderr_buffered = true,
+		stdout_buffered = true, stderr_buffered = true,
 		on_stdout = function(_, d) out = d end,
 		on_stderr = function(_, d) err = d end,
 		on_exit = function(_, code)
@@ -477,7 +559,7 @@ function M.restore_under_cursor(buf)
 			return
 		end
 	end
-	local row = vim.api.nvim_win_get_cursor(win)[1]
+	local row  = vim.api.nvim_win_get_cursor(win)[1]
 	local line = vim.api.nvim_buf_get_lines(buf, row - 1, row, false)[1] or ""
 	local task_id = line:match("id:(%S+)")
 	if not task_id then
@@ -487,19 +569,15 @@ function M.restore_under_cursor(buf)
 	vim.notify("Restoring task " .. task_id .. "…", vim.log.levels.INFO, { title = "todoist-nvim" })
 	local out, err = {}, {}
 	vim.fn.jobstart({ binary, "reopen", task_id }, {
-		stdout_buffered = true,
-		stderr_buffered = true,
+		stdout_buffered = true, stderr_buffered = true,
 		on_stdout = function(_, d) out = d end,
 		on_stderr = function(_, d) err = d end,
 		on_exit = function(_, code)
 			if code ~= 0 then
 				local msg = table.concat(err, "\n"):gsub("%s+$", "")
 				vim.schedule(function()
-					vim.notify(
-						msg ~= "" and msg or ("Restore failed (exit " .. code .. ")."),
-						vim.log.levels.ERROR,
-						{ title = "todoist-nvim" }
-					)
+					vim.notify(msg ~= "" and msg or ("Restore failed (exit " .. code .. ")."),
+						vim.log.levels.ERROR, { title = "todoist-nvim" })
 				end)
 				return
 			end
@@ -537,8 +615,7 @@ function M.sync()
 	vim.notify("Syncing…", vim.log.levels.INFO, { title = "todoist-nvim" })
 	local out, err = {}, {}
 	vim.fn.jobstart({ binary, "sync", tmpfile }, {
-		stdout_buffered = true,
-		stderr_buffered = true,
+		stdout_buffered = true, stderr_buffered = true,
 		on_stdout = function(_, d) out = d end,
 		on_stderr = function(_, d) err = d end,
 		on_exit = function(_, code)
@@ -561,18 +638,29 @@ end
 
 -- ─── setup() ─────────────────────────────────────────────────────────────────────
 
---- Optional config:
----   icons      = { unchecked = "string", checked = "string" }
----   highlights = { unchecked = "HlGroup", checked = "HlGroup" }
+--- Config mirrors render-markdown.nvim's checkbox config:
+---
+---   checkbox = {
+---     unchecked = { icon = "☐", highlight = "TodoistUnchecked", scope_highlight = nil },
+---     checked   = { icon = "☑", highlight = "TodoistChecked",   scope_highlight = "TodoistCheckedLine" },
+---     custom    = {
+---       { raw = "[-]", icon = "⌛", highlight = "TodoistTodo", scope_highlight = nil },
+---     },
+---   },
 function M.setup(opts)
 	opts = opts or {}
-	if opts.icons then
-		if opts.icons.unchecked then ICON_UNCHECKED = opts.icons.unchecked end
-		if opts.icons.checked   then ICON_CHECKED   = opts.icons.checked   end
-	end
-	if opts.highlights then
-		if opts.highlights.unchecked then HL_UNCHECKED = opts.highlights.unchecked end
-		if opts.highlights.checked   then HL_CHECKED   = opts.highlights.checked   end
+
+	if opts.checkbox then
+		local cb = opts.checkbox
+		if cb.unchecked then
+			CHECKBOX.unchecked = vim.tbl_extend("force", CHECKBOX.unchecked, cb.unchecked)
+		end
+		if cb.checked then
+			CHECKBOX.checked = vim.tbl_extend("force", CHECKBOX.checked, cb.checked)
+		end
+		if cb.custom then
+			CHECKBOX.custom = cb.custom
+		end
 	end
 
 	vim.api.nvim_create_user_command("TodoistOpen",      function() M.open() end,      { desc = "Open active Todoist tasks",              nargs = 0 })
