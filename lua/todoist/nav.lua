@@ -32,7 +32,6 @@ local cache = { projects = {} }
 -- ─── Parsing helpers ───────────────────────────────────────────────────────────
 
 local function extract_id(line, key)
-	-- Matches <!-- key:VALUE -->
 	return line:match("<!%-%- " .. key .. ":(%S-) %-%->")
 end
 
@@ -45,12 +44,6 @@ local function leading_spaces(line)
 end
 
 -- ─── Hierarchy loader ───────────────────────────────────────────────────────────
--- Call this after every fetch to rebuild the in-memory tree.
--- Handles the format that fetch.rs actually emits:
---   # ProjectName <!-- project:ID -->
---   ## SectionName <!-- section:ID -->
---   - [ ] Task <!-- id:ID -->
---       - [ ] Subtask <!-- id:ID -->   (4-space indent per level)
 
 function M.load(lines)
 	local projects = {}
@@ -58,7 +51,6 @@ function M.load(lines)
 	local cur_sec = nil
 
 	for _, line in ipairs(lines) do
-		-- H1 = project  ("# " but NOT "## ")
 		if line:match("^# ") and not line:match("^## ") then
 			local pid = extract_id(line, "project")
 			if pid then
@@ -67,8 +59,6 @@ function M.load(lines)
 				table.insert(projects, cur_proj)
 				cur_sec = nil
 			end
-
-		-- H2 = section  ("## " but NOT "### ")
 		elseif line:match("^## ") and not line:match("^### ") then
 			local sid = extract_id(line, "section")
 			if sid and cur_proj then
@@ -76,15 +66,12 @@ function M.load(lines)
 				cur_sec = { id = sid, name = name, project_id = cur_proj.id, tasks = {} }
 				table.insert(cur_proj.sections, cur_sec)
 			end
-
-		-- Task / subtask line
 		elseif line:match("^%s*%- %[.%]%s") then
 			local tid = extract_id(line, "id")
 			local checked = line:match("%- %[x%]") ~= nil or line:match("%- %[X%]") ~= nil
 			local raw = line:match("^%s*%- %[.%]%s(.+)$") or ""
 			local content = strip_comment(raw)
 			local indent = leading_spaces(line)
-
 			if tid and cur_proj then
 				local task = {
 					id = tid,
@@ -97,7 +84,6 @@ function M.load(lines)
 					local tbl = cur_sec and cur_sec.tasks or cur_proj.tasks
 					table.insert(tbl, task)
 				else
-					-- Attach to the most recent top-level task in the container
 					local tbl = cur_sec and cur_sec.tasks or cur_proj.tasks
 					local parent = nil
 					for j = #tbl, 1, -1 do
@@ -119,71 +105,53 @@ function M.load(lines)
 	cache.projects = projects
 end
 
--- ─── Finders ─────────────────────────────────────────────────────────────────────
+-- ─── Finders ────────────────────────────────────────────────────────────────────
 
 local function find_project(pid)
 	for _, p in ipairs(cache.projects) do
-		if p.id == pid then
-			return p
-		end
+		if p.id == pid then return p end
 	end
 end
 
 local function find_section(proj, sid)
 	for _, s in ipairs(proj.sections) do
-		if s.id == sid then
-			return s
-		end
+		if s.id == sid then return s end
 	end
 end
 
 local function find_task_anywhere(proj, tid)
 	for _, t in ipairs(proj.tasks) do
-		if t.id == tid then
-			return t, nil
-		end
+		if t.id == tid then return t, nil end
 		for _, sub in ipairs(t.subtasks) do
-			if sub.id == tid then
-				return sub, nil
-			end
+			if sub.id == tid then return sub, nil end
 		end
 	end
 	for _, sec in ipairs(proj.sections) do
 		for _, t in ipairs(sec.tasks) do
-			if t.id == tid then
-				return t, sec
-			end
+			if t.id == tid then return t, sec end
 			for _, sub in ipairs(t.subtasks) do
-				if sub.id == tid then
-					return sub, sec
-				end
+				if sub.id == tid then return sub, sec end
 			end
 		end
 	end
 end
 
--- Find which project a section belongs to (for cross-project lookup)
 local function find_project_by_section(sid)
 	for _, p in ipairs(cache.projects) do
 		for _, s in ipairs(p.sections) do
-			if s.id == sid then
-				return p, s
-			end
+			if s.id == sid then return p, s end
 		end
 	end
 end
 
--- Find which project (and optional section) a task belongs to
 local function find_project_by_task(tid)
 	for _, p in ipairs(cache.projects) do
 		local t, sec = find_task_anywhere(p, tid)
-		if t then
-			return p, sec, t
-		end
+		if t then return p, sec, t end
 	end
 end
 
--- ─── Renderers ────────────────────────────────────────────────────────────────────
+-- ─── Helpers ───────────────────────────────────────────────────────────────────
 
 local function fmt_task(task, extra_indent)
 	extra_indent = extra_indent or ""
@@ -191,13 +159,22 @@ local function fmt_task(task, extra_indent)
 	return extra_indent .. "- [" .. check .. "] " .. task.content .. " <!-- id:" .. task.id .. " -->"
 end
 
+-- Insert a blank line only when not collapsed
+local function blank(out)
+	if not state.collapsed then
+		table.insert(out, "")
+	end
+end
+
+-- ─── Renderers ───────────────────────────────────────────────────────────────────
+
 local function render_all_projects()
 	local out, collapsed = {}, state.collapsed
 	for _, proj in ipairs(cache.projects) do
 		table.insert(out, "# " .. proj.name .. " <!-- project:" .. proj.id .. " -->")
 		if not collapsed then
 			if #proj.tasks > 0 then
-				table.insert(out, "")
+				blank(out)
 				for _, t in ipairs(proj.tasks) do
 					table.insert(out, fmt_task(t))
 					for _, sub in ipairs(t.subtasks) do
@@ -206,7 +183,7 @@ local function render_all_projects()
 				end
 			end
 			for _, sec in ipairs(proj.sections) do
-				table.insert(out, "")
+				blank(out)
 				table.insert(out, "## " .. sec.name .. " <!-- section:" .. sec.id .. " -->")
 				for _, t in ipairs(sec.tasks) do
 					table.insert(out, fmt_task(t))
@@ -216,7 +193,7 @@ local function render_all_projects()
 				end
 			end
 		end
-		table.insert(out, "")
+		blank(out)
 	end
 	return out
 end
@@ -224,29 +201,27 @@ end
 local function render_single_project(proj)
 	local out, collapsed = {}, state.collapsed
 	table.insert(out, "# " .. proj.name .. " <!-- project:" .. proj.id .. " -->")
-	table.insert(out, "")
-	if #proj.tasks > 0 then
-		for _, t in ipairs(proj.tasks) do
-			table.insert(out, fmt_task(t))
-			if not collapsed then
+	blank(out)
+	if not collapsed then
+		if #proj.tasks > 0 then
+			for _, t in ipairs(proj.tasks) do
+				table.insert(out, fmt_task(t))
 				for _, sub in ipairs(t.subtasks) do
 					table.insert(out, fmt_task(sub, "    "))
 				end
 			end
+			blank(out)
 		end
-		table.insert(out, "")
-	end
-	for _, sec in ipairs(proj.sections) do
-		table.insert(out, "## " .. sec.name .. " <!-- section:" .. sec.id .. " -->")
-		if not collapsed then
+		for _, sec in ipairs(proj.sections) do
+			table.insert(out, "## " .. sec.name .. " <!-- section:" .. sec.id .. " -->")
 			for _, t in ipairs(sec.tasks) do
 				table.insert(out, fmt_task(t))
 				for _, sub in ipairs(t.subtasks) do
 					table.insert(out, fmt_task(sub, "    "))
 				end
 			end
+			blank(out)
 		end
-		table.insert(out, "")
 	end
 	return out
 end
@@ -255,10 +230,10 @@ local function render_single_section(sec, proj)
 	local out, collapsed = {}, state.collapsed
 	table.insert(out, "# " .. proj.name .. " <!-- project:" .. proj.id .. " -->")
 	table.insert(out, "## " .. sec.name .. " <!-- section:" .. sec.id .. " -->")
-	table.insert(out, "")
-	for _, t in ipairs(sec.tasks) do
-		table.insert(out, fmt_task(t))
-		if not collapsed then
+	blank(out)
+	if not collapsed then
+		for _, t in ipairs(sec.tasks) do
+			table.insert(out, fmt_task(t))
 			for _, sub in ipairs(t.subtasks) do
 				table.insert(out, fmt_task(sub, "    "))
 			end
@@ -270,12 +245,12 @@ end
 local function render_single_task(task, proj)
 	local out, collapsed = {}, state.collapsed
 	table.insert(out, "# " .. proj.name .. " <!-- project:" .. proj.id .. " -->")
-	table.insert(out, "")
+	blank(out)
 	table.insert(out, fmt_task(task))
 	if not collapsed and #task.subtasks > 0 then
-		table.insert(out, "")
+		blank(out)
 		table.insert(out, "### Subtasks")
-		table.insert(out, "")
+		blank(out)
 		for _, sub in ipairs(task.subtasks) do
 			table.insert(out, fmt_task(sub, "    "))
 		end
@@ -327,9 +302,6 @@ function M.lines()
 	return render_current()
 end
 
---- Smart enter: jump directly to the view matching what's under the cursor,
---- regardless of the current view. Priority: task > section > project.
---- Returns new lines, or nil if nothing actionable under cursor.
 function M.enter(buf)
 	local item = cursor_item(buf)
 	state.collapsed = false
@@ -341,16 +313,13 @@ function M.enter(buf)
 		return render_current()
 	end
 
-	-- Task under cursor — jump straight to SINGLE_TASK from any view
 	if item.task_id then
-		-- Resolve project_id regardless of current view
 		local project_id = state.ctx.project_id
 		if not project_id then
 			local proj = find_project_by_task(item.task_id)
 			project_id = proj and proj.id
 		end
 		if project_id then
-			-- Don't re-push if we're already viewing this task
 			if state.view == V.SINGLE_TASK and state.ctx.task_id == item.task_id then
 				return nil
 			end
@@ -362,7 +331,6 @@ function M.enter(buf)
 		end
 	end
 
-	-- Section under cursor — jump straight to SINGLE_SECTION from any view
 	if item.section_id then
 		local project_id = state.ctx.project_id
 		if not project_id then
@@ -380,7 +348,6 @@ function M.enter(buf)
 		end
 	end
 
-	-- Project under cursor — jump to SINGLE_PROJECT from any view
 	if item.project_id then
 		if state.view == V.SINGLE_PROJECT and state.ctx.project_id == item.project_id then
 			return nil
@@ -391,11 +358,8 @@ function M.enter(buf)
 	return nil
 end
 
---- Go one level up.  Returns new lines, or nil if already at root.
 function M.back()
-	if #state.history == 0 then
-		return nil
-	end
+	if #state.history == 0 then return nil end
 	local prev = table.remove(state.history)
 	state.view = prev.view
 	state.ctx = prev.ctx
@@ -403,19 +367,16 @@ function M.back()
 	return render_current()
 end
 
---- Collapse current view.
 function M.fold()
 	state.collapsed = true
 	return render_current()
 end
 
---- Expand current view.
 function M.unfold()
 	state.collapsed = false
 	return render_current()
 end
 
---- Human-readable label for the status line (optional helper).
 function M.label()
 	local labels = {
 		[V.ALL_PROJECTS] = "All Projects",
