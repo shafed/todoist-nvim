@@ -12,7 +12,8 @@
 --   <BS>            navigate up
 --   zf / zu         fold / unfold
 --   x               toggle task complete ([ ] ↔ [x]) and sync
---   <localleader>s  sync (active buffer only)
+--                   in completed buffer: mark/unmark task for restore
+--   <localleader>s  sync (active buffer) / sync restores (completed buffer)
 --   <localleader>r  restore task under cursor (completed buffer only)
 
 local nav = require("todoist.nav")
@@ -21,6 +22,10 @@ local M = {}
 
 -- ─── Namespace for extmarks (ID concealment) ───────────────────────────────────────────
 local NS = vim.api.nvim_create_namespace("todoist_meta")
+
+-- ─── Pending restores state ────────────────────────────────────────────────────────────
+-- { [task_id] = true }  — tasks marked for restore, not yet sent to API
+local pending_restores = {}
 
 -- ─── Binary discovery ──────────────────────────────────────────────────────────────────
 
@@ -169,6 +174,109 @@ local function toggle_complete(buf)
 	apply_extmark_conceal(buf)
 end
 
+-- ─── Toggle restore mark (completed buffer) ──────────────────────────────────────────
+
+--- Mark/unmark a completed task for batch restore. Does NOT call the API.
+local function toggle_restore_mark(buf)
+	local cur_win = vim.api.nvim_get_current_win()
+	local win
+	if vim.api.nvim_win_get_buf(cur_win) == buf then
+		win = cur_win
+	else
+		win = vim.fn.bufwinid(buf)
+		if win == -1 then
+			vim.notify("Completed buffer is not visible.", vim.log.levels.WARN, { title = "todoist-nvim" })
+			return
+		end
+	end
+	local row = vim.api.nvim_win_get_cursor(win)[1]
+	local line = vim.api.nvim_buf_get_lines(buf, row - 1, row, false)[1] or ""
+
+	-- Strip existing mark prefix to get the canonical line
+	local clean_line = line:gsub("^%[r%] ", "", 1)
+	local task_id = clean_line:match("id:(%S+)")
+	if not task_id then
+		vim.notify("No task ID found on this line.", vim.log.levels.WARN, { title = "todoist-nvim" })
+		return
+	end
+
+	local new_line
+	if pending_restores[task_id] then
+		pending_restores[task_id] = nil
+		new_line = clean_line
+		vim.notify("Unmarked: " .. task_id, vim.log.levels.INFO, { title = "todoist-nvim" })
+	else
+		pending_restores[task_id] = true
+		new_line = "[r] " .. clean_line
+		vim.notify("Marked for restore: " .. task_id, vim.log.levels.INFO, { title = "todoist-nvim" })
+	end
+
+	-- Temporarily allow writes to the readonly buffer
+	vim.bo[buf].modifiable = true
+	vim.bo[buf].readonly = false
+	vim.api.nvim_buf_set_lines(buf, row - 1, row, false, { new_line })
+	vim.bo[buf].modifiable = false
+	vim.bo[buf].readonly = true
+	apply_extmark_conceal(buf)
+end
+
+-- ─── Sync pending restores (completed buffer \s) ─────────────────────────────────────
+
+local function sync_restores()
+	local binary = find_binary()
+	if not binary then
+		vim.notify("todoist-nvim: binary not found.", vim.log.levels.ERROR, { title = "todoist-nvim" })
+		return
+	end
+	local ids = vim.tbl_keys(pending_restores)
+	if #ids == 0 then
+		vim.notify("No tasks marked for restore. Use x to mark tasks first.", vim.log.levels.WARN, { title = "todoist-nvim" })
+		return
+	end
+	vim.notify("Restoring " .. #ids .. " task(s)…", vim.log.levels.INFO, { title = "todoist-nvim" })
+
+	local done = 0
+	local failed = 0
+	for _, task_id in ipairs(ids) do
+		local err = {}
+		vim.fn.jobstart({ binary, "reopen", task_id }, {
+			stdout_buffered = true,
+			stderr_buffered = true,
+			on_stderr = function(_, d)
+				err = d
+			end,
+			on_exit = function(_, code)
+				done = done + 1
+				if code ~= 0 then
+					failed = failed + 1
+					local msg = table.concat(err, "\n"):gsub("%s+$", "")
+					vim.schedule(function()
+						vim.notify(
+							"Failed to restore " .. task_id .. ": " .. (msg ~= "" and msg or "exit " .. code),
+							vim.log.levels.ERROR,
+							{ title = "todoist-nvim" }
+						)
+					end)
+				end
+				if done == #ids then
+					pending_restores = {}
+					vim.schedule(function()
+						if failed == 0 then
+							vim.notify("All " .. #ids .. " task(s) restored!", vim.log.levels.INFO, { title = "todoist-nvim" })
+						end
+						vim.defer_fn(function()
+							M.completed()
+							vim.defer_fn(function()
+								M.open()
+							end, 300)
+						end, 300)
+					end)
+				end
+			end,
+		})
+	end
+end
+
 -- ─── Active tasks buffer keymaps ──────────────────────────────────────────────────────
 
 local function setup_active_keymaps(buf)
@@ -226,9 +334,14 @@ local function setup_completed_keymaps(buf)
 	vim.keymap.set("n", "<C-r>", function()
 		M.completed()
 	end, vim.tbl_extend("force", o, { desc = "Refresh" }))
+	-- x marks/unmarks task for restore (no immediate API call)
 	vim.keymap.set("n", "x", function()
-		M.restore_under_cursor(buf)
-	end, vim.tbl_extend("force", o, { desc = "Restore task" }))
+		toggle_restore_mark(buf)
+	end, vim.tbl_extend("force", o, { desc = "Mark/unmark task for restore" }))
+	-- \s sends all marked tasks to API at once
+	vim.keymap.set("n", "<localleader>s", function()
+		sync_restores()
+	end, vim.tbl_extend("force", o, { desc = "Sync restores → Todoist" }))
 end
 
 -- ─── Treesitter highlighting ────────────────────────────────────────────────────────────
@@ -351,6 +464,7 @@ function M.completed()
 end
 
 -- ─── restore_under_cursor() ───────────────────────────────────────────────────────────
+-- Kept for :TodoistRestore command (immediate single-task restore)
 
 function M.restore_under_cursor(buf)
 	local binary = find_binary()
