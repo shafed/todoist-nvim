@@ -54,6 +54,7 @@ pub fn run() -> Result<(), String> {
                     project_id: t.project_id.clone(),
                     section_id: t.section_id.clone(),
                     parent_id: t.parent_id.clone(),
+                    checked: false,
                 },
             )
         })
@@ -67,6 +68,28 @@ pub fn run() -> Result<(), String> {
     projects.sort_by_key(|p| p.child_order);
     let output = render(&projects, &sections, &tasks)?;
     print!("{}", output);
+    Ok(())
+}
+
+pub fn run_completed() -> Result<(), String> {
+    let token = read_token()?;
+    let client = api::make_client()?;
+    let tasks = api::fetch_completed_tasks(&client, &token)?;
+
+    if tasks.is_empty() {
+        println!("# No completed tasks\n\nNothing completed in the last 30 days.");
+        return Ok(());
+    }
+
+    let mut out = String::new();
+    for task in &tasks {
+        let date = task.completed_at.as_deref().unwrap_or("unknown date");
+        out.push_str(&format!(
+            "- [x] {} <!-- id:{} completed:{} -->\n",
+            task.content, task.id, date
+        ));
+    }
+    print!("{}", out);
     Ok(())
 }
 
