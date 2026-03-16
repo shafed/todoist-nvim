@@ -294,12 +294,13 @@ local function nav_redraw(buf, lines)
 	restore_cursor(buf, anchor, old_row)
 end
 
--- ─── Toggle complete under cursor (active views only) ────────────────────────────────
+-- ─── Toggle complete under cursor ────────────────────────────────────────────────────
 local function toggle_complete(buf)
+	local row = vim.api.nvim_win_get_cursor(0)[1]
+	local line = vim.api.nvim_buf_get_lines(buf, row - 1, row, false)[1] or ""
+
 	if nav.current_view() == nav.VIEW.COMPLETED then
-		-- In completed view x = mark/unmark for restore
-		local row = vim.api.nvim_win_get_cursor(0)[1]
-		local line = vim.api.nvim_buf_get_lines(buf, row - 1, row, false)[1] or ""
+		-- In completed view: x = mark/unmark for restore
 		local task_id = line:match("id:(%S+)")
 		if not task_id then
 			vim.notify("No task ID found on this line.", vim.log.levels.WARN, { title = "todoist-nvim" })
@@ -315,18 +316,14 @@ local function toggle_complete(buf)
 			new_line = line:gsub("%- %[x%]", "- [ ]", 1)
 			vim.notify("Marked for restore: " .. task_id, vim.log.levels.INFO, { title = "todoist-nvim" })
 		end
-		set_lines(buf, (function()
-			local ls = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-			ls[row] = new_line
-			return ls
-		end)())
+		local all_lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+		all_lines[row] = new_line
+		set_lines(buf, all_lines)
 		apply_extmark_conceal(buf, row)
 		return
 	end
 
 	-- Active view: normal toggle
-	local row = vim.api.nvim_win_get_cursor(0)[1]
-	local line = vim.api.nvim_buf_get_lines(buf, row - 1, row, false)[1] or ""
 	local new_line
 	if line:match("%- %[ %]") then
 		new_line = line:gsub("%- %[ %]", "- [x]", 1)
@@ -391,7 +388,6 @@ local function sync_restores(buf)
 								{ title = "todoist-nvim" }
 							)
 						end
-						-- Refresh completed view, then re-open active
 						vim.defer_fn(function()
 							M.completed(buf)
 							vim.defer_fn(function()
@@ -529,14 +525,9 @@ function M.completed(existing_buf)
 		return
 	end
 
-	-- Make sure active buffer exists (user may call :TodoistCompleted directly)
 	local buf = existing_buf or find_buf(ACTIVE_BUF_NAME)
 	if not buf then
-		vim.notify(
-			"Open :TodoistOpen first.",
-			vim.log.levels.WARN,
-			{ title = "todoist-nvim" }
-		)
+		vim.notify("Open :TodoistOpen first.", vim.log.levels.WARN, { title = "todoist-nvim" })
 		return
 	end
 
@@ -609,7 +600,7 @@ function M.restore_under_cursor(buf)
 						msg ~= "" and msg or ("Restore failed (exit " .. code .. ")."),
 						vim.log.levels.ERROR,
 						{ title = "todoist-nvim" }
-					end)
+					)
 				end)
 				return
 			end
