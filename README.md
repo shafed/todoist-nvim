@@ -27,7 +27,7 @@ and two-way sync.
 - ✅ Fetches all active tasks grouped by **project → section → task → subtask**
 - ✅ Checkbox icons rendered via extmarks — same icons as
   [render-markdown.nvim](https://github.com/MeanderingProgrammer/render-markdown.nvim)
-  (`` / ``)
+  (`󰄱 ` / `󰱒 `)
 - ✅ `- ` list marker and `<!--id:...-->` metadata concealed automatically
 - ✅ Markdown Tree-sitter highlighting (headings, bold, etc.) injected without
   changing `filetype`
@@ -61,11 +61,11 @@ are applied via `nvim_buf_set_extmark`:
 
 ```
 Raw line:   - [ ] Fix bug <!--id:abc123-->
-Rendered:     Fix bug
+Rendered:   󰄱   Fix bug
 ```
 
 1. `"- "` list marker → concealed
-2. `"[ ]"` / `"[x]"` → overlay icon (`` / ``)
+2. `"[ ]"` / `"[x]"` → overlay icon (`󰄱 ` / `󰱒 `)
 3. `<!--id:...-->` metadata → concealed
 
 The cursor line always shows the raw text so navigation and editing work
@@ -200,12 +200,12 @@ Checkbox icons and highlights can be customized to match your setup:
 require("todoist").setup({
     checkbox = {
         unchecked = {
-            icon            = " ",           -- default: nf-fa-square_o
+            icon            = "󰄱  ",           -- default: nf-fa-square_o
             highlight       = "TodoistUnchecked", -- links to Comment by default
             scope_highlight = nil,
         },
         checked = {
-            icon            = " ",           -- default: nf-fa-check_square
+            icon            = "󰱒  ",           -- default: nf-fa-check_square
             highlight       = "TodoistChecked",   -- links to String by default
             scope_highlight = "TodoistCheckedLine",
         },
