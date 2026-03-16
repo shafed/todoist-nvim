@@ -2,14 +2,11 @@
 //
 // Parses the buffer back into Vec<BufferTask>.
 //
-// New buffer structure:
-//   # Todoist Tasks          ← H1: ignored (fixed title)
-//   ## Project <!-- project:ID -->   ← H2: project
-//   ### Section <!-- section:ID -->  ← H3: section
+// Buffer structure (matches fetch.rs output):
+//   # ProjectName <!-- project:ID -->   <- H1: project
+//   ## SectionName <!-- section:ID -->  <- H2: section
 //   - [ ] Task <!-- id:ID -->
-//     - [ ] Subtask <!-- id:ID -->   ← 2-space indent per level
-//
-// Indentation: 2 spaces per level (changed from 4).
+//       - [ ] Subtask <!-- id:ID -->    <- 4-space indent per level
 
 use crate::models::BufferTask;
 use std::collections::HashMap;
@@ -57,27 +54,33 @@ pub fn parse(lines: &[String]) -> ParseResult {
     for (i, raw_line) in lines.iter().enumerate() {
         let line_num = i + 1;
 
-        // H1 — buffer title, skip
+        // H1 = project ("# " but NOT "## ")
         if raw_line.starts_with("# ") && !raw_line.starts_with("## ") {
-            continue;
-        }
-
-        // H2 — project
-        if raw_line.starts_with("## ") && !raw_line.starts_with("### ") {
-            current_section_id = None;
             current_project_id = extract_comment_value(raw_line, "project:");
+            current_section_id = None;
             if current_project_id.is_none() {
                 warnings.push(format!(
-                    "Line {}: H2 has no <!-- project:ID --> — tasks here won't be synced",
+                    "Line {}: H1 has no <!-- project:ID --> — tasks here won't be synced",
                     line_num
                 ));
             }
             continue;
         }
 
-        // H3 — section
-        if raw_line.starts_with("### ") {
+        // H2 = section ("## " but NOT "### ")
+        if raw_line.starts_with("## ") && !raw_line.starts_with("### ") {
             current_section_id = extract_comment_value(raw_line, "section:");
+            if current_section_id.is_none() {
+                warnings.push(format!(
+                    "Line {}: H2 has no <!-- section:ID --> — tasks here won't be synced",
+                    line_num
+                ));
+            }
+            continue;
+        }
+
+        // H3+ — ignored (e.g. "### Subtasks" label in single-task view)
+        if raw_line.starts_with("### ") {
             continue;
         }
 
@@ -87,9 +90,9 @@ pub fn parse(lines: &[String]) -> ParseResult {
         let is_checked   = trimmed.starts_with("- [x] ") || trimmed.starts_with("- [X] ");
         if !is_unchecked && !is_checked { continue; }
 
-        // 2 spaces per indent level
+        // 4 spaces per indent level
         let indent_spaces = leading_spaces(raw_line);
-        let indent_level  = indent_spaces / 2;
+        let indent_level  = indent_spaces / 4;
 
         let after_checkbox = &trimmed[6..]; // "- [ ] " or "- [x] " = 6 chars
         let (content_raw, task_id) = strip_comment(after_checkbox);
@@ -151,18 +154,18 @@ mod tests {
     }
 
     #[test]
-    fn h1_is_ignored() {
-        let buf = lines("# Todoist Tasks\n\n## Work <!-- project:p1 -->\n\n- [ ] Task <!-- id:t1 -->");
+    fn h1_is_project() {
+        let buf = lines("# Work <!-- project:p1 -->\n\n- [ ] Task <!-- id:t1 -->");
         let r = parse(&buf);
         assert_eq!(r.tasks.len(), 1);
         assert_eq!(r.tasks[0].project_id.as_deref(), Some("p1"));
     }
 
     #[test]
-    fn h3_is_section() {
+    fn h2_is_section() {
         let buf = lines(
-            "## Work <!-- project:p1 -->\n\n\
-             ### Backend <!-- section:s1 -->\n\n\
+            "# Work <!-- project:p1 -->\n\
+             ## Backend <!-- section:s1 -->\n\
              - [ ] Fix bug <!-- id:t1 -->"
         );
         let r = parse(&buf);
@@ -170,21 +173,21 @@ mod tests {
     }
 
     #[test]
-    fn two_space_indent_resolves_parent() {
+    fn four_space_indent_resolves_parent() {
+        // No indent → siblings
         let buf = lines(
-            "## Work <!-- project:p1 -->\n\n\
+            "# Work <!-- project:p1 -->\n\
              - [ ] Parent <!-- id:p1 -->\n\
              - [ ] Child <!-- id:c1 -->"
         );
-        // Child is NOT indented → sibling
         let r = parse(&buf);
         assert_eq!(r.tasks[1].parent_id, None);
 
-        // Now with 2-space indent → child
+        // 4-space indent → child
         let buf2 = lines(
-            "## Work <!-- project:p1 -->\n\n\
+            "# Work <!-- project:p1 -->\n\
              - [ ] Parent <!-- id:p1 -->\n\
-               - [ ] Child <!-- id:c1 -->"
+                 - [ ] Child <!-- id:c1 -->"
         );
         let r2 = parse(&buf2);
         assert_eq!(r2.tasks[1].parent_id.as_deref(), Some("p1"));
@@ -192,14 +195,14 @@ mod tests {
 
     #[test]
     fn checked_task_detected() {
-        let buf = lines("## Work <!-- project:p1 -->\n\n- [x] Done <!-- id:t1 -->");
+        let buf = lines("# Work <!-- project:p1 -->\n\n- [x] Done <!-- id:t1 -->");
         let r = parse(&buf);
         assert!(r.tasks[0].checked);
     }
 
     #[test]
     fn new_task_no_id() {
-        let buf = lines("## Work <!-- project:p1 -->\n\n- [ ] Brand new task");
+        let buf = lines("# Work <!-- project:p1 -->\n\n- [ ] Brand new task");
         let r = parse(&buf);
         assert_eq!(r.tasks[0].id, None);
     }
@@ -207,14 +210,27 @@ mod tests {
     #[test]
     fn section_resets_on_new_project() {
         let buf = lines(
-            "## Work <!-- project:p1 -->\n\
-             ### Backend <!-- section:s1 -->\n\
+            "# Work <!-- project:p1 -->\n\
+             ## Backend <!-- section:s1 -->\n\
              - [ ] A <!-- id:t1 -->\n\
-             ## Personal <!-- project:p2 -->\n\
+             # Personal <!-- project:p2 -->\n\
              - [ ] B <!-- id:t2 -->"
         );
         let r = parse(&buf);
         assert_eq!(r.tasks[0].section_id.as_deref(), Some("s1"));
         assert_eq!(r.tasks[1].section_id, None);
+    }
+
+    #[test]
+    fn h3_subtasks_label_ignored() {
+        let buf = lines(
+            "# Work <!-- project:p1 -->\n\
+             - [ ] Task <!-- id:t1 -->\n\
+             ### Subtasks\n\
+                 - [ ] Sub <!-- id:s1 -->"
+        );
+        let r = parse(&buf);
+        assert_eq!(r.tasks.len(), 2);
+        assert_eq!(r.tasks[1].indent_level, 1);
     }
 }
