@@ -4,32 +4,30 @@
 
 local M = {}
 
--- ─── View constants ──────────────────────────────────────────────────────────────
+-- ─── View constants ──────────────────────────────────────────────────────────
 
 M.VIEW = {
-	ALL_PROJECTS = "all_projects",
+	ALL_PROJECTS  = "all_projects",
 	SINGLE_PROJECT = "single_project",
 	SINGLE_SECTION = "single_section",
-	SINGLE_TASK = "single_task",
+	SINGLE_TASK   = "single_task",
 }
 local V = M.VIEW
 
--- ─── State ───────────────────────────────────────────────────────────────────────
+-- ─── State ───────────────────────────────────────────────────────────────────
 
 local state = {
-	view = V.ALL_PROJECTS,
-	history = {}, -- stack of { view, ctx }
-	ctx = {}, -- { project_id, section_id, task_id }
+	view     = V.ALL_PROJECTS,
+	history  = {},
+	ctx      = {},
 	collapsed = false,
 }
 
--- ─── Data cache ───────────────────────────────────────────────────────────────
+-- ─── Data cache ──────────────────────────────────────────────────────────────
 
--- projects = [{id, name, sections=[{id,name,tasks=[…]}], tasks=[…]}]
--- Each task = {id, content, checked, indent, subtasks=[…]}
 local cache = { projects = {} }
 
--- ─── Parsing helpers ───────────────────────────────────────────────────────────
+-- ─── Parsing helpers ─────────────────────────────────────────────────────────
 
 local function extract_id(line, key)
 	return line:match("<!%-%- " .. key .. ":(%S-) %-%->")
@@ -43,12 +41,12 @@ local function leading_spaces(line)
 	return #(line:match("^(%s*)"))
 end
 
--- ─── Hierarchy loader ───────────────────────────────────────────────────────────
+-- ─── Hierarchy loader ────────────────────────────────────────────────────────
 
 function M.load(lines)
 	local projects = {}
 	local cur_proj = nil
-	local cur_sec = nil
+	local cur_sec  = nil
 
 	for _, line in ipairs(lines) do
 		if line:match("^# ") and not line:match("^## ") then
@@ -67,17 +65,17 @@ function M.load(lines)
 				table.insert(cur_proj.sections, cur_sec)
 			end
 		elseif line:match("^%s*%- %[.%]%s") then
-			local tid = extract_id(line, "id")
+			local tid     = extract_id(line, "id")
 			local checked = line:match("%- %[x%]") ~= nil or line:match("%- %[X%]") ~= nil
-			local raw = line:match("^%s*%- %[.%]%s(.+)$") or ""
+			local raw     = line:match("^%s*%- %[.%]%s(.+)$") or ""
 			local content = strip_comment(raw)
-			local indent = leading_spaces(line)
+			local indent  = leading_spaces(line)
 			if tid and cur_proj then
 				local task = {
-					id = tid,
-					content = content,
-					checked = checked,
-					indent = indent,
+					id       = tid,
+					content  = content,
+					checked  = checked,
+					indent   = indent,
 					subtasks = {},
 				}
 				if indent == 0 then
@@ -105,7 +103,7 @@ function M.load(lines)
 	cache.projects = projects
 end
 
--- ─── Finders ────────────────────────────────────────────────────────────────────
+-- ─── Finders ─────────────────────────────────────────────────────────────────
 
 local function find_project(pid)
 	for _, p in ipairs(cache.projects) do
@@ -151,7 +149,7 @@ local function find_project_by_task(tid)
 	end
 end
 
--- ─── Helpers ───────────────────────────────────────────────────────────────────
+-- ─── Helpers ──────────────────────────────────────────────────────────────────
 
 local function fmt_task(task, extra_indent)
 	extra_indent = extra_indent or ""
@@ -159,14 +157,12 @@ local function fmt_task(task, extra_indent)
 	return extra_indent .. "- [" .. check .. "] " .. task.content .. " <!-- id:" .. task.id .. " -->"
 end
 
--- Blank line only when not collapsed
 local function blank(out)
 	if not state.collapsed then
 		table.insert(out, "")
 	end
 end
 
--- Render tasks (and their subtasks) only when not collapsed
 local function emit_tasks(out, tasks)
 	if state.collapsed then return end
 	for _, t in ipairs(tasks) do
@@ -177,19 +173,16 @@ local function emit_tasks(out, tasks)
 	end
 end
 
--- ─── Renderers ───────────────────────────────────────────────────────────────────
+-- ─── Renderers ────────────────────────────────────────────────────────────────
 
 local function render_all_projects()
 	local out = {}
 	for _, proj in ipairs(cache.projects) do
-		-- Project heading always visible
 		table.insert(out, "# " .. proj.name .. " <!-- project:" .. proj.id .. " -->")
-		-- Tasks directly under project (no section)
 		if #proj.tasks > 0 then
 			blank(out)
 			emit_tasks(out, proj.tasks)
 		end
-		-- Sections: heading always visible, tasks hidden when collapsed
 		for _, sec in ipairs(proj.sections) do
 			blank(out)
 			table.insert(out, "## " .. sec.name .. " <!-- section:" .. sec.id .. " -->")
@@ -202,14 +195,11 @@ end
 
 local function render_single_project(proj)
 	local out = {}
-	-- Project heading always visible
 	table.insert(out, "# " .. proj.name .. " <!-- project:" .. proj.id .. " -->")
-	-- Tasks directly under project
 	if #proj.tasks > 0 then
 		blank(out)
 		emit_tasks(out, proj.tasks)
 	end
-	-- Section headings always visible; tasks hidden when collapsed
 	for _, sec in ipairs(proj.sections) do
 		blank(out)
 		table.insert(out, "## " .. sec.name .. " <!-- section:" .. sec.id .. " -->")
@@ -220,7 +210,6 @@ end
 
 local function render_single_section(sec, proj)
 	local out = {}
-	-- Both headings always visible
 	table.insert(out, "# " .. proj.name .. " <!-- project:" .. proj.id .. " -->")
 	table.insert(out, "## " .. sec.name .. " <!-- section:" .. sec.id .. " -->")
 	blank(out)
@@ -230,7 +219,6 @@ end
 
 local function render_single_task(task, proj)
 	local out = {}
-	-- Project heading always visible
 	table.insert(out, "# " .. proj.name .. " <!-- project:" .. proj.id .. " -->")
 	blank(out)
 	table.insert(out, fmt_task(task))
@@ -254,7 +242,7 @@ local function render_current()
 		return proj and render_single_project(proj) or { "(project not found)" }
 	elseif state.view == V.SINGLE_SECTION then
 		local proj = find_project(ctx.project_id)
-		local sec = proj and find_section(proj, ctx.section_id)
+		local sec  = proj and find_section(proj, ctx.section_id)
 		return sec and render_single_section(sec, proj) or { "(section not found)" }
 	elseif state.view == V.SINGLE_TASK then
 		local proj = find_project(ctx.project_id)
@@ -264,29 +252,39 @@ local function render_current()
 	return {}
 end
 
--- ─── Item under cursor ───────────────────────────────────────────────────────────
+-- ─── Item under cursor ────────────────────────────────────────────────────────
 
 local function cursor_item(buf)
-	local row = vim.api.nvim_win_get_cursor(0)[1]
+	local row  = vim.api.nvim_win_get_cursor(0)[1]
 	local line = vim.api.nvim_buf_get_lines(buf, row - 1, row, false)[1] or ""
 	return {
 		project_id = extract_id(line, "project"),
 		section_id = extract_id(line, "section"),
-		task_id = extract_id(line, "id"),
+		task_id    = extract_id(line, "id"),
 	}
 end
 
--- ─── Public navigation API ────────────────────────────────────────────────────────
+-- ─── Public API ───────────────────────────────────────────────────────────────
 
 function M.reset()
-	state.view = V.ALL_PROJECTS
-	state.history = {}
-	state.ctx = {}
+	state.view     = V.ALL_PROJECTS
+	state.history  = {}
+	state.ctx      = {}
 	state.collapsed = false
 end
 
 function M.lines()
 	return render_current()
+end
+
+--- Returns ALL tasks from ALL projects, regardless of current nav view.
+--- Used by sync() so the diff sees the full picture and won't delete unseen tasks.
+function M.full_lines()
+	local saved_collapsed = state.collapsed
+	state.collapsed = false
+	local out = render_all_projects()
+	state.collapsed = saved_collapsed
+	return out
 end
 
 function M.enter(buf)
@@ -296,7 +294,7 @@ function M.enter(buf)
 	local function push(new_view, new_ctx)
 		table.insert(state.history, { view = state.view, ctx = vim.deepcopy(state.ctx) })
 		state.view = new_view
-		state.ctx = new_ctx
+		state.ctx  = new_ctx
 		return render_current()
 	end
 
@@ -313,7 +311,7 @@ function M.enter(buf)
 			return push(V.SINGLE_TASK, {
 				project_id = project_id,
 				section_id = state.ctx.section_id,
-				task_id = item.task_id,
+				task_id    = item.task_id,
 			})
 		end
 	end
@@ -348,8 +346,8 @@ end
 function M.back()
 	if #state.history == 0 then return nil end
 	local prev = table.remove(state.history)
-	state.view = prev.view
-	state.ctx = prev.ctx
+	state.view     = prev.view
+	state.ctx      = prev.ctx
 	state.collapsed = false
 	return render_current()
 end
@@ -366,10 +364,10 @@ end
 
 function M.label()
 	local labels = {
-		[V.ALL_PROJECTS] = "All Projects",
+		[V.ALL_PROJECTS]   = "All Projects",
 		[V.SINGLE_PROJECT] = "Project",
 		[V.SINGLE_SECTION] = "Section",
-		[V.SINGLE_TASK] = "Task",
+		[V.SINGLE_TASK]    = "Task",
 	}
 	return labels[state.view] or state.view
 end
