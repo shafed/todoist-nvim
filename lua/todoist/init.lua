@@ -23,7 +23,7 @@ local NS = vim.api.nvim_create_namespace("todoist_meta")
 
 local function find_binary()
 	local this_file = debug.getinfo(1, "S").source:sub(2)
-	local plugin_root = vim.fn.fnamemodify(this_file, ":h:h")
+	local plugin_root = vim.fn.fnamemodify(this_file, ":h:h:h")
 	local candidates = {
 		plugin_root .. "/target/release/todoist-nvim",
 		plugin_root .. "/target/debug/todoist-nvim",
