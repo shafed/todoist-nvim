@@ -609,4 +609,6 @@ function M.setup(opts)
 	end, { desc = "Restore completed task under cursor", nargs = 0 })
 end
 
+vim.treesitter.language.register("markdown", "todoist")
+
 return M
