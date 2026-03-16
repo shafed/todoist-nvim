@@ -192,9 +192,7 @@ local function toggle_restore_mark(buf)
 	local row = vim.api.nvim_win_get_cursor(win)[1]
 	local line = vim.api.nvim_buf_get_lines(buf, row - 1, row, false)[1] or ""
 
-	-- Strip existing mark prefix to get the canonical line
-	local clean_line = line:gsub("^%[r%] ", "", 1)
-	local task_id = clean_line:match("id:(%S+)")
+	local task_id = line:match("id:(%S+)")
 	if not task_id then
 		vim.notify("No task ID found on this line.", vim.log.levels.WARN, { title = "todoist-nvim" })
 		return
@@ -202,16 +200,17 @@ local function toggle_restore_mark(buf)
 
 	local new_line
 	if pending_restores[task_id] then
+		-- снять пометку: вернуть [ ] → [x]
 		pending_restores[task_id] = nil
-		new_line = clean_line
+		new_line = line:gsub("%- %[ %]", "- [x]", 1)
 		vim.notify("Unmarked: " .. task_id, vim.log.levels.INFO, { title = "todoist-nvim" })
 	else
+		-- поставить пометку: заменить [x] → [ ]
 		pending_restores[task_id] = true
-		new_line = "[ ] " .. clean_line
+		new_line = line:gsub("%- %[x%]", "- [ ]", 1)
 		vim.notify("Marked for restore: " .. task_id, vim.log.levels.INFO, { title = "todoist-nvim" })
 	end
 
-	-- Temporarily allow writes to the readonly buffer
 	vim.bo[buf].modifiable = true
 	vim.bo[buf].readonly = false
 	vim.api.nvim_buf_set_lines(buf, row - 1, row, false, { new_line })
