@@ -80,18 +80,24 @@ local function set_conceal(buf)
 		vim.wo[win].concealcursor = "nvic"
 	end
 	local win = vim.fn.bufwinid(buf)
-	if win ~= -1 then apply(win) end
+	if win ~= -1 then
+		apply(win)
+	end
 	local guard_id = vim.api.nvim_create_autocmd({ "BufEnter", "BufWinEnter", "WinEnter" }, {
 		buffer = buf,
 		callback = function()
 			local w = vim.fn.bufwinid(buf)
-			if w ~= -1 then apply(w) end
+			if w ~= -1 then
+				apply(w)
+			end
 		end,
 	})
 	vim.api.nvim_create_autocmd("BufDelete", {
 		buffer = buf,
 		once = true,
-		callback = function() pcall(vim.api.nvim_del_autocmd, guard_id) end,
+		callback = function()
+			pcall(vim.api.nvim_del_autocmd, guard_id)
+		end,
 	})
 end
 
@@ -134,7 +140,9 @@ local function focus_buf(buf)
 end
 
 local function nav_redraw(buf, lines)
-	if not lines then return end
+	if not lines then
+		return
+	end
 	set_lines(buf, lines)
 	apply_extmark_conceal(buf)
 	vim.api.nvim_win_set_cursor(0, { 1, 0 })
@@ -161,9 +169,6 @@ local function toggle_complete(buf)
 	apply_extmark_conceal(buf)
 	-- Restore cursor row (set_lines may move it)
 	vim.api.nvim_win_set_cursor(0, { row, 0 })
-
-	-- Sync immediately
-	M.sync()
 end
 
 -- ─── Active tasks buffer keymaps ──────────────────────────────────────────────────────
@@ -172,33 +177,43 @@ local function setup_active_keymaps(buf)
 	local o = { buffer = buf, noremap = true, silent = true }
 
 	vim.keymap.set("n", "q", "<cmd>bdelete<cr>", vim.tbl_extend("force", o, { desc = "Close" }))
-	vim.keymap.set("n", "<C-r>", function() M.open() end,
-		vim.tbl_extend("force", o, { desc = "Refresh" }))
-	vim.keymap.set("n", "<localleader>s", function() M.sync() end,
-		vim.tbl_extend("force", o, { desc = "Sync → Todoist" }))
-	vim.keymap.set("n", "<localleader>c", function() M.completed() end,
-		vim.tbl_extend("force", o, { desc = "Open Completed" }))
+	vim.keymap.set("n", "<C-r>", function()
+		M.open()
+	end, vim.tbl_extend("force", o, { desc = "Refresh" }))
+	vim.keymap.set("n", "<localleader>s", function()
+		M.sync()
+	end, vim.tbl_extend("force", o, { desc = "Sync → Todoist" }))
+	vim.keymap.set("n", "<localleader>c", function()
+		M.completed()
+	end, vim.tbl_extend("force", o, { desc = "Open Completed" }))
 
 	-- Navigation
-	vim.keymap.set("n", "<CR>", function() nav_redraw(buf, nav.enter(buf)) end,
-		vim.tbl_extend("force", o, { desc = "Navigate deeper" }))
-	vim.keymap.set("n", "<BS>", function() nav_redraw(buf, nav.back()) end,
-		vim.tbl_extend("force", o, { desc = "Navigate up" }))
+	vim.keymap.set("n", "<CR>", function()
+		nav_redraw(buf, nav.enter(buf))
+	end, vim.tbl_extend("force", o, { desc = "Navigate deeper" }))
+	vim.keymap.set("n", "<BS>", function()
+		nav_redraw(buf, nav.back())
+	end, vim.tbl_extend("force", o, { desc = "Navigate up" }))
 
 	-- Folding
-	vim.keymap.set("n", "zf", function() nav_redraw(buf, nav.fold()) end,
-		vim.tbl_extend("force", o, { desc = "Collapse current view" }))
-	vim.keymap.set("n", "zu", function() nav_redraw(buf, nav.unfold()) end,
-		vim.tbl_extend("force", o, { desc = "Expand current view" }))
+	vim.keymap.set("n", "zf", function()
+		nav_redraw(buf, nav.fold())
+	end, vim.tbl_extend("force", o, { desc = "Collapse current view" }))
+	vim.keymap.set("n", "zu", function()
+		nav_redraw(buf, nav.unfold())
+	end, vim.tbl_extend("force", o, { desc = "Expand current view" }))
 
 	-- Complete / reopen task
-	vim.keymap.set("n", "x", function() toggle_complete(buf) end,
-		vim.tbl_extend("force", o, { desc = "Toggle task complete" }))
+	vim.keymap.set("n", "x", function()
+		toggle_complete(buf)
+	end, vim.tbl_extend("force", o, { desc = "Toggle task complete" }))
 
 	-- Re-apply concealment after any text change
 	vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
 		buffer = buf,
-		callback = function() apply_extmark_conceal(buf) end,
+		callback = function()
+			apply_extmark_conceal(buf)
+		end,
 	})
 end
 
@@ -207,12 +222,15 @@ end
 local function setup_completed_keymaps(buf)
 	local o = { buffer = buf, noremap = true, silent = true }
 	vim.keymap.set("n", "q", "<cmd>bdelete<cr>", vim.tbl_extend("force", o, { desc = "Close" }))
-	vim.keymap.set("n", "r", function() M.completed() end,
-		vim.tbl_extend("force", o, { desc = "Refresh" }))
-	vim.keymap.set("n", "<C-r>", function() M.completed() end,
-		vim.tbl_extend("force", o, { desc = "Refresh" }))
-	vim.keymap.set("n", "<localleader>r", function() M.restore_under_cursor(buf) end,
-		vim.tbl_extend("force", o, { desc = "Restore task" }))
+	vim.keymap.set("n", "r", function()
+		M.completed()
+	end, vim.tbl_extend("force", o, { desc = "Refresh" }))
+	vim.keymap.set("n", "<C-r>", function()
+		M.completed()
+	end, vim.tbl_extend("force", o, { desc = "Refresh" }))
+	vim.keymap.set("n", "<localleader>r", function()
+		M.restore_under_cursor(buf)
+	end, vim.tbl_extend("force", o, { desc = "Restore task" }))
 end
 
 -- ─── Treesitter highlighting ────────────────────────────────────────────────────────────
@@ -220,7 +238,9 @@ end
 local function start_treesitter(buf)
 	local ok, _ = pcall(vim.treesitter.start, buf, "markdown")
 	if not ok then
-		vim.api.nvim_buf_call(buf, function() vim.cmd("setlocal syntax=markdown") end)
+		vim.api.nvim_buf_call(buf, function()
+			vim.cmd("setlocal syntax=markdown")
+		end)
 	end
 end
 
@@ -247,16 +267,22 @@ function M.open()
 	if not binary then
 		vim.notify(
 			"todoist-nvim: binary not found. Run: cargo build --release",
-			vim.log.levels.ERROR, { title = "todoist-nvim" }
+			vim.log.levels.ERROR,
+			{ title = "todoist-nvim" }
 		)
 		return
 	end
 	vim.notify("Fetching tasks…", vim.log.levels.INFO, { title = "todoist-nvim" })
 	local out, err = {}, {}
 	vim.fn.jobstart({ binary, "fetch" }, {
-		stdout_buffered = true, stderr_buffered = true,
-		on_stdout = function(_, d) out = d end,
-		on_stderr = function(_, d) err = d end,
+		stdout_buffered = true,
+		stderr_buffered = true,
+		on_stdout = function(_, d)
+			out = d
+		end,
+		on_stderr = function(_, d)
+			err = d
+		end,
 		on_exit = function(_, code)
 			if code ~= 0 then
 				local msg = table.concat(err, "\n"):gsub("%s+$", "")
@@ -265,8 +291,12 @@ function M.open()
 				end)
 				return
 			end
-			if out[#out] == "" then table.remove(out) end
-			vim.schedule(function() M._fill_active_buffer(out) end)
+			if out[#out] == "" then
+				table.remove(out)
+			end
+			vim.schedule(function()
+				M._fill_active_buffer(out)
+			end)
 		end,
 	})
 end
@@ -296,9 +326,14 @@ function M.completed()
 	vim.notify("Fetching completed tasks…", vim.log.levels.INFO, { title = "todoist-nvim" })
 	local out, err = {}, {}
 	vim.fn.jobstart({ binary, "completed" }, {
-		stdout_buffered = true, stderr_buffered = true,
-		on_stdout = function(_, d) out = d end,
-		on_stderr = function(_, d) err = d end,
+		stdout_buffered = true,
+		stderr_buffered = true,
+		on_stdout = function(_, d)
+			out = d
+		end,
+		on_stderr = function(_, d)
+			err = d
+		end,
 		on_exit = function(_, code)
 			if code ~= 0 then
 				local msg = table.concat(err, "\n"):gsub("%s+$", "")
@@ -307,8 +342,12 @@ function M.completed()
 				end)
 				return
 			end
-			if out[#out] == "" then table.remove(out) end
-			vim.schedule(function() M._fill_completed_buffer(out) end)
+			if out[#out] == "" then
+				table.remove(out)
+			end
+			vim.schedule(function()
+				M._fill_completed_buffer(out)
+			end)
 		end,
 	})
 end
@@ -342,16 +381,22 @@ function M.restore_under_cursor(buf)
 	vim.notify("Restoring task " .. task_id .. "…", vim.log.levels.INFO, { title = "todoist-nvim" })
 	local out, err = {}, {}
 	vim.fn.jobstart({ binary, "reopen", task_id }, {
-		stdout_buffered = true, stderr_buffered = true,
-		on_stdout = function(_, d) out = d end,
-		on_stderr = function(_, d) err = d end,
+		stdout_buffered = true,
+		stderr_buffered = true,
+		on_stdout = function(_, d)
+			out = d
+		end,
+		on_stderr = function(_, d)
+			err = d
+		end,
 		on_exit = function(_, code)
 			if code ~= 0 then
 				local msg = table.concat(err, "\n"):gsub("%s+$", "")
 				vim.schedule(function()
 					vim.notify(
 						msg ~= "" and msg or ("Restore failed (exit " .. code .. ")."),
-						vim.log.levels.ERROR, { title = "todoist-nvim" }
+						vim.log.levels.ERROR,
+						{ title = "todoist-nvim" }
 					)
 				end)
 				return
@@ -360,7 +405,9 @@ function M.restore_under_cursor(buf)
 				vim.notify("Task restored!", vim.log.levels.INFO, { title = "todoist-nvim" })
 				vim.defer_fn(function()
 					M.completed()
-					vim.defer_fn(function() M.open() end, 300)
+					vim.defer_fn(function()
+						M.open()
+					end, 300)
 				end, 300)
 			end)
 		end,
@@ -390,9 +437,14 @@ function M.sync()
 	vim.notify("Syncing…", vim.log.levels.INFO, { title = "todoist-nvim" })
 	local out, err = {}, {}
 	vim.fn.jobstart({ binary, "sync", tmpfile }, {
-		stdout_buffered = true, stderr_buffered = true,
-		on_stdout = function(_, d) out = d end,
-		on_stderr = function(_, d) err = d end,
+		stdout_buffered = true,
+		stderr_buffered = true,
+		on_stdout = function(_, d)
+			out = d
+		end,
+		on_stderr = function(_, d)
+			err = d
+		end,
 		on_exit = function(_, code)
 			vim.fn.delete(tmpfile)
 			if code ~= 0 then
@@ -405,7 +457,9 @@ function M.sync()
 			local summary = table.concat(out, "\n"):gsub("%s+$", "")
 			vim.schedule(function()
 				vim.notify(summary, vim.log.levels.INFO, { title = "todoist-nvim sync" })
-				vim.defer_fn(function() M.open() end, 500)
+				vim.defer_fn(function()
+					M.open()
+				end, 500)
 			end)
 		end,
 	})
@@ -416,12 +470,15 @@ end
 function M.setup(opts)
 	opts = opts or {}
 
-	vim.api.nvim_create_user_command("TodoistOpen", function() M.open() end,
-		{ desc = "Open active Todoist tasks", nargs = 0 })
-	vim.api.nvim_create_user_command("TodoistCompleted", function() M.completed() end,
-		{ desc = "Open completed Todoist tasks (last 30 days)", nargs = 0 })
-	vim.api.nvim_create_user_command("TodoistSync", function() M.sync() end,
-		{ desc = "Sync Todoist buffer → Todoist", nargs = 0 })
+	vim.api.nvim_create_user_command("TodoistOpen", function()
+		M.open()
+	end, { desc = "Open active Todoist tasks", nargs = 0 })
+	vim.api.nvim_create_user_command("TodoistCompleted", function()
+		M.completed()
+	end, { desc = "Open completed Todoist tasks (last 30 days)", nargs = 0 })
+	vim.api.nvim_create_user_command("TodoistSync", function()
+		M.sync()
+	end, { desc = "Sync Todoist buffer → Todoist", nargs = 0 })
 	vim.api.nvim_create_user_command("TodoistRestore", function()
 		local buf = find_buf(COMPLETED_BUF_NAME)
 		if not buf then
