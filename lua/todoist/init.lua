@@ -15,7 +15,7 @@
 --                   mark/unmark task for restore (completed view)
 --   <localleader>s  sync (active view) / sync restores (completed view)
 --   <localleader>r  restore task under cursor (completed view only)
---   <localleader>c  open completed view
+--   <localleader>c  toggle completed view (second press returns to previous view)
 
 local nav = require("todoist.nav")
 
@@ -409,9 +409,14 @@ local function setup_keymaps(buf)
 	vim.keymap.set("n", "<localleader>s", function()
 		if nav.current_view() == nav.VIEW.COMPLETED then sync_restores(buf) else M.sync() end
 	end, vim.tbl_extend("force", o, { desc = "Sync" }))
+	-- \c: toggle completed view — if already in completed, go back; otherwise open it
 	vim.keymap.set("n", "<localleader>c", function()
-		M.completed(buf)
-	end, vim.tbl_extend("force", o, { desc = "Open Completed view" }))
+		if nav.current_view() == nav.VIEW.COMPLETED then
+			nav_redraw(buf, nav.back())
+		else
+			M.completed(buf)
+		end
+	end, vim.tbl_extend("force", o, { desc = "Toggle completed view" }))
 	vim.keymap.set("n", "<localleader>r", function()
 		if nav.current_view() == nav.VIEW.COMPLETED then
 			M.restore_under_cursor(buf)
@@ -450,7 +455,6 @@ function M._fill_active_buffer(lines)
 	if is_new then
 		buf = create_buf(ACTIVE_BUF_NAME)
 	end
-	-- Always (re-)apply keymaps so they work after lazy reload or buffer reuse
 	if not keymaps_set[buf] then
 		setup_keymaps(buf)
 		setup_cursor_conceal(buf)
