@@ -20,8 +20,26 @@ local nav = require("todoist.nav")
 
 local M = {}
 
--- ─── Namespace for extmarks (ID concealment) ───────────────────────────────────────────
+-- ─── Namespace for extmarks ─────────────────────────────────────────────────────────────────
 local NS = vim.api.nvim_create_namespace("todoist_meta")
+
+-- ─── Checkbox icons ───────────────────────────────────────────────────────────────────
+local ICON_UNCHECKED = "☐" -- or "" with Nerd Fonts
+local ICON_CHECKED   = "☑" -- or "" with Nerd Fonts
+
+-- Highlight groups for checkboxes.
+-- Falls back to Comment / String if user hasn't defined custom groups.
+local HL_UNCHECKED = "TodoistUnchecked"
+local HL_CHECKED   = "TodoistChecked"
+
+local function ensure_highlights()
+	if vim.fn.hlexists(HL_UNCHECKED) == 0 then
+		vim.api.nvim_set_hl(0, HL_UNCHECKED, { link = "Comment", default = true })
+	end
+	if vim.fn.hlexists(HL_CHECKED) == 0 then
+		vim.api.nvim_set_hl(0, HL_CHECKED, { link = "String", default = true })
+	end
+end
 
 -- ─── Pending restores state ────────────────────────────────────────────────────────────
 -- { [task_id] = true }  — tasks marked for restore, not yet sent to API
@@ -61,17 +79,40 @@ local function find_buf(name)
 	return nil
 end
 
--- ─── Extmark-based ID concealment ───────────────────────────────────────────────────
+-- ─── Extmark-based concealment + checkbox rendering ─────────────────────────────────
 
 local function apply_extmark_conceal(buf)
 	vim.api.nvim_buf_clear_namespace(buf, NS, 0, -1)
 	local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
 	for lnum, line in ipairs(lines) do
+		-- Conceal <!--id:--> comments
 		local s, e = line:find("%s*<!%-%-.*%-%->%s*")
 		if s and e then
 			vim.api.nvim_buf_set_extmark(buf, NS, lnum - 1, s - 1, {
 				end_col = e,
 				conceal = "",
+			})
+		end
+
+		-- Render unchecked: - [ ] → icon
+		local us, ue = line:find("%- %[ %]")
+		if us and ue then
+			vim.api.nvim_buf_set_extmark(buf, NS, lnum - 1, us - 1, {
+				end_col = ue,
+				conceal = "",
+				virt_text = { { ICON_UNCHECKED, HL_UNCHECKED } },
+				virt_text_pos = "inline",
+			})
+		end
+
+		-- Render checked: - [x] → icon
+		local xs, xe = line:find("%- %[[xX]%]")
+		if xs and xe then
+			vim.api.nvim_buf_set_extmark(buf, NS, lnum - 1, xs - 1, {
+				end_col = xe,
+				conceal = "",
+				virt_text = { { ICON_CHECKED, HL_CHECKED } },
+				virt_text_pos = "inline",
 			})
 		end
 	end
@@ -91,13 +132,10 @@ local function set_conceal(buf)
 	local guard_id = vim.api.nvim_create_autocmd({ "BufEnter", "BufWinEnter", "WinEnter" }, {
 		buffer = buf,
 		callback = function()
-			-- defer to run after render-markdown which may reset conceallevel
-			vim.defer_fn(function()
-				local w = vim.fn.bufwinid(buf)
-				if w ~= -1 then
-					apply(w)
-				end
-			end, 50)
+			local w = vim.fn.bufwinid(buf)
+			if w ~= -1 then
+				apply(w)
+			end
 		end,
 	})
 	vim.api.nvim_create_autocmd("BufDelete", {
@@ -158,7 +196,6 @@ end
 
 -- ─── Toggle complete under cursor ────────────────────────────────────────────────────
 
---- Toggle [ ] ↔ [x] on the task line under cursor, then sync + refresh.
 local function toggle_complete(buf)
 	local row = vim.api.nvim_win_get_cursor(0)[1]
 	local line = vim.api.nvim_buf_get_lines(buf, row - 1, row, false)[1] or ""
@@ -179,8 +216,6 @@ end
 
 -- ─── Toggle restore mark (completed buffer) ──────────────────────────────────────────
 
---- Mark/unmark a completed task for batch restore. Does NOT call the API.
---- Toggles - [x] ↔ - [ ] visually to indicate selection.
 local function toggle_restore_mark(buf)
 	local cur_win = vim.api.nvim_get_current_win()
 	local win
@@ -204,12 +239,10 @@ local function toggle_restore_mark(buf)
 
 	local new_line
 	if pending_restores[task_id] then
-		-- unmark: restore [x]
 		pending_restores[task_id] = nil
 		new_line = line:gsub("%- %[ %]", "- [x]", 1)
 		vim.notify("Unmarked: " .. task_id, vim.log.levels.INFO, { title = "todoist-nvim" })
 	else
-		-- mark: replace [x] with [ ] to indicate pending restore
 		pending_restores[task_id] = true
 		new_line = line:gsub("%- %[x%]", "- [ ]", 1)
 		vim.notify("Marked for restore: " .. task_id, vim.log.levels.INFO, { title = "todoist-nvim" })
@@ -223,7 +256,7 @@ local function toggle_restore_mark(buf)
 	apply_extmark_conceal(buf)
 end
 
--- ─── Sync pending restores (completed buffer \s) ─────────────────────────────────────
+-- ─── Sync pending restores ───────────────────────────────────────────────────────────────
 
 local function sync_restores()
 	local binary = find_binary()
@@ -304,7 +337,6 @@ local function setup_active_keymaps(buf)
 		M.completed()
 	end, vim.tbl_extend("force", o, { desc = "Open Completed" }))
 
-	-- Navigation
 	vim.keymap.set("n", "<CR>", function()
 		nav_redraw(buf, nav.enter(buf))
 	end, vim.tbl_extend("force", o, { desc = "Navigate deeper" }))
@@ -312,7 +344,6 @@ local function setup_active_keymaps(buf)
 		nav_redraw(buf, nav.back())
 	end, vim.tbl_extend("force", o, { desc = "Navigate up" }))
 
-	-- Folding
 	vim.keymap.set("n", "zf", function()
 		nav_redraw(buf, nav.fold())
 	end, vim.tbl_extend("force", o, { desc = "Collapse current view" }))
@@ -320,12 +351,10 @@ local function setup_active_keymaps(buf)
 		nav_redraw(buf, nav.unfold())
 	end, vim.tbl_extend("force", o, { desc = "Expand current view" }))
 
-	-- Complete / reopen task
 	vim.keymap.set("n", "x", function()
 		toggle_complete(buf)
 	end, vim.tbl_extend("force", o, { desc = "Toggle task complete" }))
 
-	-- Re-apply concealment after any text change
 	vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
 		buffer = buf,
 		callback = function()
@@ -345,27 +374,12 @@ local function setup_completed_keymaps(buf)
 	vim.keymap.set("n", "<C-r>", function()
 		M.completed()
 	end, vim.tbl_extend("force", o, { desc = "Refresh" }))
-	-- x marks/unmarks task for restore (no immediate API call)
 	vim.keymap.set("n", "x", function()
 		toggle_restore_mark(buf)
 	end, vim.tbl_extend("force", o, { desc = "Mark/unmark task for restore" }))
-	-- \s sends all marked tasks to API at once
 	vim.keymap.set("n", "<localleader>s", function()
 		sync_restores()
 	end, vim.tbl_extend("force", o, { desc = "Sync restores → Todoist" }))
-end
-
--- ─── Treesitter highlighting ────────────────────────────────────────────────────────────
-
-local function start_treesitter(buf)
-	-- Register before starting so render-markdown and treesitter use markdown parser
-	vim.treesitter.language.register("markdown", "todoist")
-	local ok, _ = pcall(vim.treesitter.start, buf, "markdown")
-	if not ok then
-		vim.api.nvim_buf_call(buf, function()
-			vim.cmd("setlocal syntax=markdown")
-		end)
-	end
 end
 
 -- ─── open() ──────────────────────────────────────────────────────────────────────
@@ -380,7 +394,7 @@ function M._fill_active_buffer(lines)
 	nav.reset()
 	set_lines(buf, nav.lines())
 	focus_buf(buf)
-	start_treesitter(buf)
+	ensure_highlights()
 	apply_extmark_conceal(buf)
 	set_conceal(buf)
 	vim.api.nvim_win_set_cursor(0, { 1, 0 })
@@ -435,7 +449,7 @@ function M._fill_completed_buffer(lines)
 	end
 	set_lines(buf, lines)
 	focus_buf(buf)
-	start_treesitter(buf)
+	ensure_highlights()
 	apply_extmark_conceal(buf)
 	set_conceal(buf)
 	vim.api.nvim_win_set_cursor(0, { 1, 0 })
@@ -477,7 +491,6 @@ function M.completed()
 end
 
 -- ─── restore_under_cursor() ───────────────────────────────────────────────────────────
--- Kept for :TodoistRestore command (immediate single-task restore)
 
 function M.restore_under_cursor(buf)
 	local binary = find_binary()
@@ -592,13 +605,19 @@ end
 
 -- ─── setup() ─────────────────────────────────────────────────────────────────────
 
+--- Optional config:
+---   icons = { unchecked = "string", checked = "string" }
+---   highlights = { unchecked = "HlGroup", checked = "HlGroup" }
 function M.setup(opts)
 	opts = opts or {}
 
-	-- Integrate with render-markdown.nvim if installed
-	local ok, render_md = pcall(require, "render-markdown")
-	if ok then
-		render_md.setup({ file_types = { "markdown", "todoist" } })
+	if opts.icons then
+		if opts.icons.unchecked then ICON_UNCHECKED = opts.icons.unchecked end
+		if opts.icons.checked   then ICON_CHECKED   = opts.icons.checked   end
+	end
+	if opts.highlights then
+		if opts.highlights.unchecked then HL_UNCHECKED = opts.highlights.unchecked end
+		if opts.highlights.checked   then HL_CHECKED   = opts.highlights.checked   end
 	end
 
 	vim.api.nvim_create_user_command("TodoistOpen", function()
