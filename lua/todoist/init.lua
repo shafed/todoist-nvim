@@ -37,17 +37,6 @@ local function find_binary()
 	return nil
 end
 
---- Writes new lines to buf, re-applies concealment, and resets cursor to top.
---- `lines` may be nil (no-op).
-local function nav_redraw(buf, lines)
-	if not lines then
-		return
-	end
-	set_lines(buf, lines)
-	apply_extmark_conceal(buf)
-	vim.api.nvim_win_set_cursor(0, { 1, 0 })
-end
-
 -- ─── Buffer registry ─────────────────────────────────────────────────────────
 
 local ACTIVE_BUF_NAME = "Todoist Tasks"
@@ -160,6 +149,17 @@ local function focus_buf(buf)
 	else
 		vim.api.nvim_set_current_buf(buf)
 	end
+end
+
+--- Writes new lines to buf, re-applies concealment, and resets cursor to top.
+--- `lines` may be nil (no-op).
+local function nav_redraw(buf, lines)
+	if not lines then
+		return
+	end
+	set_lines(buf, lines)
+	apply_extmark_conceal(buf)
+	vim.api.nvim_win_set_cursor(0, { 1, 0 })
 end
 
 -- ─── Active tasks buffer keymaps ─────────────────────────────────────────────
