@@ -167,8 +167,6 @@ local function toggle_complete(buf)
 
 	vim.api.nvim_buf_set_lines(buf, row - 1, row, false, { new_line })
 	apply_extmark_conceal(buf)
-	-- Restore cursor row (set_lines may move it)
-	vim.api.nvim_win_set_cursor(0, { row, 0 })
 end
 
 -- ─── Active tasks buffer keymaps ──────────────────────────────────────────────────────
