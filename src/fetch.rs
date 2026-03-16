@@ -1,144 +1,79 @@
-// src/fetch.rs
-//
-// # Buffer structure (updated)
-//
-//   # Todoist Tasks                    ← H1: fixed buffer title
-//
-//   ## Inbox <!-- project:ID -->       ← H2: project name
-//
-//   - [ ] Task <!-- id:ID -->
-//       - [ ] Subtask <!-- id:ID -->
-//
-//   ## Work <!-- project:ID -->
-//
-//   ### Backend <!-- section:ID -->    ← H3: section (optional)
-//
-//   - [ ] Fix bug <!-- id:ID -->
-//
-// H1 is a fixed title — never changes.
-// H2 = project.  H3 = section (omitted when project has no sections).
-// IDs are in HTML comments; Lua hides them with extmarks.
-//
-// # Subtask indentation
-//
-// Each indent level uses exactly 2 spaces (renders cleanly in markdown
-// and is unambiguous to parse: 2 spaces = 1 level).
-
 use crate::api;
 use crate::models::{Snapshot, SnapshotTask, Task};
 use crate::snapshot;
-use reqwest::blocking::Client;
 use std::collections::HashMap;
 use std::thread;
 
 pub fn run() -> Result<(), String> {
     let token = read_token()?;
 
-    // Spawn three independent threads — projects / sections / tasks are
-    // completely independent, so we fetch them in parallel.
-    // Each thread creates its own Client (cheap: no shared connection pool
-    // with blocking clients, but we avoid contention).
-    //
-    // Wall-clock time: max(t_projects, t_sections, t_tasks)
-    // instead of t_projects + t_sections + t_tasks  (~3× faster).
-
-    let t1 = token.clone();
+    // ── Parallel fetch: 3 threads, ~3× faster ──────────────────────────────
+    let t = token.clone();
     let projects_handle = thread::spawn(move || {
-        api::fetch_projects(&Client::new(), &t1)
+        let client = api::make_client()?;
+        api::fetch_projects(&client, &t)
     });
 
-    let t2 = token.clone();
+    let t = token.clone();
     let sections_handle = thread::spawn(move || {
-        api::fetch_sections(&Client::new(), &t2)
+        let client = api::make_client()?;
+        api::fetch_sections(&client, &t)
     });
 
-    let t3 = token.clone();
+    let t = token.clone();
     let tasks_handle = thread::spawn(move || {
-        api::fetch_tasks(&Client::new(), &t3)
+        let client = api::make_client()?;
+        api::fetch_tasks(&client, &t)
     });
 
     let mut projects = projects_handle
         .join()
-        .map_err(|_| "projects fetch thread panicked".to_string())??;
+        .map_err(|_| "projects thread panicked".to_string())??;
     let sections = sections_handle
         .join()
-        .map_err(|_| "sections fetch thread panicked".to_string())??;
+        .map_err(|_| "sections thread panicked".to_string())??;
     let tasks = tasks_handle
         .join()
-        .map_err(|_| "tasks fetch thread panicked".to_string())??;
+        .map_err(|_| "tasks thread panicked".to_string())??;
 
+    // ── Empty check ─────────────────────────────────────────────────────────
     if tasks.is_empty() {
-        println!("# Todoist Tasks\n\n*No active tasks — enjoy the peace!*");
+        println!("# 🎉 No active tasks\n\nYour Todoist is empty — enjoy the peace!");
         return Ok(());
     }
 
-    // Save snapshot before rendering.
-    let snap_tasks: HashMap<String, SnapshotTask> = tasks.iter().map(|t| {
-        (t.id.clone(), SnapshotTask {
-            id: t.id.clone(),
-            content: t.content.clone(),
-            project_id: t.project_id.clone(),
-            section_id: t.section_id.clone(),
-            parent_id: t.parent_id.clone(),
-            checked: false, // active tasks are unchecked
+    // ── Snapshot ─────────────────────────────────────────────────────────────
+    let snap_tasks: HashMap<String, SnapshotTask> = tasks
+        .iter()
+        .map(|t| {
+            (
+                t.id.clone(),
+                SnapshotTask {
+                    id: t.id.clone(),
+                    content: t.content.clone(),
+                    project_id: t.project_id.clone(),
+                    section_id: t.section_id.clone(),
+                    parent_id: t.parent_id.clone(),
+                },
+            )
         })
-    }).collect();
-
-    if let Err(e) = snapshot::save(&Snapshot::new(snap_tasks)) {
+        .collect();
+    let snap = Snapshot::new(snap_tasks);
+    if let Err(e) = snapshot::save(&snap) {
         eprintln!("Warning: could not save snapshot: {}", e);
     }
 
+    // ── Render ───────────────────────────────────────────────────────────────
     projects.sort_by_key(|p| p.child_order);
     let output = render(&projects, &sections, &tasks)?;
     print!("{}", output);
     Ok(())
 }
 
-/// Fetch and render the completed tasks buffer.
-/// Flat list sorted by completion date — most recent first.
-/// No project/section grouping, matching Todoist's activity view.
-pub fn run_completed() -> Result<(), String> {
-    let token = read_token()?;
-
-    let mut completed = api::fetch_completed_tasks(&Client::new(), &token)?;
-
-    if completed.is_empty() {
-        println!("# Completed Tasks\n\n*No completed tasks in the last 30 days.*");
-        return Ok(());
-    }
-
-    // Sort by completed_at descending (most recent first).
-    // ISO-8601 strings sort correctly lexicographically.
-    completed.sort_by(|a, b| {
-        let ta = a.completed_at.as_deref().unwrap_or("");
-        let tb = b.completed_at.as_deref().unwrap_or("");
-        tb.cmp(ta)
-    });
-
-    let mut out = String::from("# Completed Tasks\n\n");
-
-    for task in &completed {
-        let date = task.completed_at.as_deref()
-            .and_then(|s| s.get(..10)) // "YYYY-MM-DD"
-            .unwrap_or("");
-
-        if date.is_empty() {
-            out.push_str(&format!("- [x] {} <!-- id:{} -->\n", task.content, task.id));
-        } else {
-            out.push_str(&format!(
-                "- [x] {} <!-- id:{} date:{} -->\n",
-                task.content, task.id, date
-            ));
-        }
-    }
-
-    print!("{}", out);
-    Ok(())
-}
-
 pub fn read_token() -> Result<String, String> {
     std::env::var("TODOIST_API_TOKEN").map_err(|_| {
         "TODOIST_API_TOKEN is not set.\n\
+         Add it to your shell profile or Neovim config:\n\
          export TODOIST_API_TOKEN=\"your_token_here\"\n\
          Get your token: https://app.todoist.com/app/settings/integrations/developer"
             .to_string()
@@ -154,7 +89,10 @@ fn render(
 ) -> Result<String, String> {
     let mut sections_by_project: HashMap<&str, Vec<&crate::models::Section>> = HashMap::new();
     for sec in sections {
-        sections_by_project.entry(sec.project_id.as_str()).or_default().push(sec);
+        sections_by_project
+            .entry(sec.project_id.as_str())
+            .or_default()
+            .push(sec);
     }
     for v in sections_by_project.values_mut() {
         v.sort_by_key(|s| s.section_order);
@@ -186,17 +124,19 @@ fn render(
             .push(task);
     }
 
-    // H1 = fixed buffer title
-    let mut out = String::from("# Todoist Tasks\n\n");
+    let mut out = String::with_capacity(4096);
 
     for project in projects {
         let pid = project.id.as_str();
-        let Some(section_map) = by_project.get(pid) else { continue; };
+        let Some(section_map) = by_project.get(pid) else {
+            continue;
+        };
 
-        // H2 = project name
-        out.push_str(&format!("## {} <!-- project:{} -->\n\n", project.name, project.id));
+        out.push_str(&format!(
+            "# {} <!-- project:{} -->\n\n",
+            project.name, project.id
+        ));
 
-        // Unsectioned tasks directly under the project.
         if let Some(unsectioned) = section_map.get(&None) {
             for task in unsectioned {
                 render_task(&mut out, task, &subtask_map, 0);
@@ -204,13 +144,19 @@ fn render(
             out.push('\n');
         }
 
-        // H3 = section name (only when the project actually has sections).
         if let Some(secs) = sections_by_project.get(pid) {
             for sec in secs {
                 let sid = sec.id.as_str();
-                let Some(tasks_in_sec) = section_map.get(&Some(sid)) else { continue; };
-                if tasks_in_sec.is_empty() { continue; }
-                out.push_str(&format!("### {} <!-- section:{} -->\n\n", sec.name, sec.id));
+                let Some(tasks_in_sec) = section_map.get(&Some(sid)) else {
+                    continue;
+                };
+                if tasks_in_sec.is_empty() {
+                    continue;
+                }
+                out.push_str(&format!(
+                    "## {} <!-- section:{} -->\n\n",
+                    sec.name, sec.id
+                ));
                 for task in tasks_in_sec {
                     render_task(&mut out, task, &subtask_map, 0);
                 }
@@ -219,23 +165,24 @@ fn render(
         }
     }
 
-    if out.trim() == "# Todoist Tasks" {
-        return Ok("# Todoist Tasks\n\n*All projects appear to be empty.*\n".to_string());
+    if out.is_empty() {
+        return Ok("# No active tasks\n\nAll projects appear to be empty.\n".to_string());
     }
 
     Ok(out)
 }
 
-/// Render a task recursively.
-/// Indent: 2 spaces per level — unambiguous and markdown-friendly.
 fn render_task(
     out: &mut String,
     task: &Task,
     subtask_map: &HashMap<&str, Vec<&Task>>,
     depth: usize,
 ) {
-    let indent = "  ".repeat(depth);
-    out.push_str(&format!("{}- [ ] {} <!-- id:{} -->\n", indent, task.content, task.id));
+    let indent = "    ".repeat(depth);
+    out.push_str(&format!(
+        "{}- [ ] {} <!-- id:{} -->\n",
+        indent, task.content, task.id
+    ));
     if let Some(children) = subtask_map.get(task.id.as_str()) {
         for child in children {
             render_task(out, child, subtask_map, depth + 1);

@@ -1,11 +1,20 @@
-// src/api.rs
-
 use crate::models::{CompletedTask, Page, Project, Section, Task};
 use reqwest::blocking::Client;
 use serde::de::DeserializeOwned;
 use serde_json::json;
+use std::time::Duration;
 
 const BASE: &str = "https://api.todoist.com/api/v1";
+const TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Build a pre-configured client with generous timeout.
+pub fn make_client() -> Result<Client, String> {
+    Client::builder()
+        .timeout(TIMEOUT)
+        .connect_timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("Failed to build HTTP client: {}", e))
+}
 
 fn http_err(status: u16, path: &str) -> String {
     match status {
@@ -34,13 +43,15 @@ pub fn get_all<T: DeserializeOwned>(
         if let Some(ref c) = cursor {
             req = req.query(&[("cursor", c.as_str())]);
         }
-        let resp = req.send()
+        let resp = req
+            .send()
             .map_err(|e| format!("Network error ({}): {}", path, e))?;
         let status = resp.status().as_u16();
         if status < 200 || status >= 300 {
             return Err(http_err(status, path));
         }
-        let page: Page<T> = resp.json()
+        let page: Page<T> = resp
+            .json()
             .map_err(|e| format!("Parse error ({}): {}", path, e))?;
         items.extend(page.results);
         match page.next_cursor {
@@ -63,17 +74,14 @@ pub fn fetch_tasks(client: &Client, token: &str) -> Result<Vec<Task>, String> {
 
 /// Fetch recently completed tasks (last 30 days).
 pub fn fetch_completed_tasks(client: &Client, token: &str) -> Result<Vec<CompletedTask>, String> {
-    // API v1 requires since/until for this endpoint.
-    // Default: last 30 days.
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs();
     let since_secs = now.saturating_sub(30 * 24 * 3600);
 
-    // Format as YYYY-MM-DD
     let since = format_date(since_secs);
-    let until = format_date(now + 86400); // tomorrow
+    let until = format_date(now + 86400);
 
     let url = format!(
         "{}/tasks/completed/by_completion_date?since={}&until={}",
@@ -91,7 +99,6 @@ pub fn fetch_completed_tasks(client: &Client, token: &str) -> Result<Vec<Complet
         return Err(http_err(status, "tasks/completed/by_completion_date"));
     }
 
-    // This endpoint returns { "items": [...], "next_cursor": ... }
     #[derive(serde::Deserialize)]
     struct CompletedPage {
         items: Vec<CompletedTask>,
@@ -99,33 +106,35 @@ pub fn fetch_completed_tasks(client: &Client, token: &str) -> Result<Vec<Complet
         _next_cursor: Option<String>,
     }
 
-    let page: CompletedPage = resp.json()
+    let page: CompletedPage = resp
+        .json()
         .map_err(|e| format!("Parse error (completed tasks): {}", e))?;
 
     Ok(page.items)
 }
 
 fn format_date(unix_secs: u64) -> String {
-    // Simple YYYY-MM-DD formatter without chrono.
     let days_since_epoch = unix_secs / 86400;
-    // Jan 1 1970 = day 0.
-    // Approximate: accurate enough for a 30-day window.
     let mut y = 1970u64;
     let mut d = days_since_epoch;
     loop {
         let days_in_year = if is_leap(y) { 366 } else { 365 };
-        if d < days_in_year { break; }
+        if d < days_in_year {
+            break;
+        }
         d -= days_in_year;
         y += 1;
     }
     let months = if is_leap(y) {
-        [31,29,31,30,31,30,31,31,30,31,30,31]
+        [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
     } else {
-        [31,28,31,30,31,30,31,31,30,31,30,31]
+        [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
     };
     let mut m = 1u64;
     for &days in &months {
-        if d < days { break; }
+        if d < days {
+            break;
+        }
         d -= days;
         m += 1;
     }
@@ -139,35 +148,52 @@ fn is_leap(y: u64) -> bool {
 // ─── Mutations ────────────────────────────────────────────────────────────────
 
 pub fn create_task(
-    client: &Client, token: &str,
-    content: &str, project_id: &str,
-    section_id: Option<&str>, parent_id: Option<&str>,
+    client: &Client,
+    token: &str,
+    content: &str,
+    project_id: &str,
+    section_id: Option<&str>,
+    parent_id: Option<&str>,
 ) -> Result<String, String> {
     let mut body = json!({ "content": content, "project_id": project_id });
-    if let Some(sid) = section_id { body["section_id"] = json!(sid); }
-    if let Some(pid) = parent_id  { body["parent_id"]  = json!(pid); }
+    if let Some(sid) = section_id {
+        body["section_id"] = json!(sid);
+    }
+    if let Some(pid) = parent_id {
+        body["parent_id"] = json!(pid);
+    }
 
     let resp = client
         .post(format!("{}/tasks", BASE))
         .header("Authorization", format!("Bearer {}", token))
-        .json(&body).send()
+        .json(&body)
+        .send()
         .map_err(|e| format!("Network error (create task): {}", e))?;
 
     let status = resp.status().as_u16();
     if status < 200 || status >= 300 {
         return Err(http_err(status, "tasks [POST]"));
     }
-    let created: serde_json::Value = resp.json()
+    let created: serde_json::Value = resp
+        .json()
         .map_err(|e| format!("Parse error (create task): {}", e))?;
-    created["id"].as_str().map(|s| s.to_string())
+    created["id"]
+        .as_str()
+        .map(|s| s.to_string())
         .ok_or_else(|| "Create task: missing 'id' in response".to_string())
 }
 
-pub fn update_task(client: &Client, token: &str, task_id: &str, content: &str) -> Result<(), String> {
+pub fn update_task(
+    client: &Client,
+    token: &str,
+    task_id: &str,
+    content: &str,
+) -> Result<(), String> {
     let resp = client
         .post(format!("{}/tasks/{}", BASE, task_id))
         .header("Authorization", format!("Bearer {}", token))
-        .json(&json!({ "content": content })).send()
+        .json(&json!({ "content": content }))
+        .send()
         .map_err(|e| format!("Network error (update {}): {}", task_id, e))?;
     let status = resp.status().as_u16();
     if status < 200 || status >= 300 {
@@ -189,7 +215,6 @@ pub fn close_task(client: &Client, token: &str, task_id: &str) -> Result<(), Str
     Ok(())
 }
 
-/// Reopen (uncomplete) a task.
 pub fn reopen_task(client: &Client, token: &str, task_id: &str) -> Result<(), String> {
     let resp = client
         .post(format!("{}/tasks/{}/reopen", BASE, task_id))
@@ -211,7 +236,9 @@ pub fn delete_task(client: &Client, token: &str, task_id: &str) -> Result<(), St
         .map_err(|e| format!("Network error (delete {}): {}", task_id, e))?;
     let status = resp.status().as_u16();
     if status < 200 || status >= 300 {
-        if status == 404 { return Ok(()); }
+        if status == 404 {
+            return Ok(());
+        }
         return Err(http_err(status, &format!("tasks/{} [DELETE]", task_id)));
     }
     Ok(())
