@@ -54,17 +54,19 @@ end
 
 -- ─── Core checkbox renderer ────────────────────────────────────────────────────────────
 local function render_checkbox(buf, lnum0, marker_col, col_s, col_e, cfg, is_cursor)
-	if is_cursor then return end
+	if is_cursor then
+		return
+	end
 
 	vim.api.nvim_buf_set_extmark(buf, NS, lnum0, marker_col, {
 		end_col = col_s,
 		conceal = "",
 	})
 
-	local icon  = cfg.icon
-	local hl    = cfg.highlight
+	local icon = cfg.icon
+	local hl = cfg.highlight
 	local icon_w = char_width(icon)
-	local raw_w  = col_e - col_s
+	local raw_w = col_e - col_s
 
 	if icon_w <= raw_w then
 		vim.api.nvim_buf_set_extmark(buf, NS, lnum0, col_s, {
@@ -133,7 +135,7 @@ local function apply_extmark_conceal(buf, cursor_line)
 	local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
 
 	for lnum, line in ipairs(lines) do
-		local lnum0    = lnum - 1
+		local lnum0 = lnum - 1
 		local is_cursor = (cursor_line ~= nil and lnum == cursor_line)
 
 		local ms, me = line:find("%s*<!%-%-.*%-%->%s*")
@@ -197,12 +199,16 @@ local function set_conceal(buf)
 		vim.wo[win].concealcursor = "nvic"
 	end
 	local win = vim.fn.bufwinid(buf)
-	if win ~= -1 then apply(win) end
+	if win ~= -1 then
+		apply(win)
+	end
 	local guard_id = vim.api.nvim_create_autocmd({ "BufEnter", "BufWinEnter", "WinEnter" }, {
 		buffer = buf,
 		callback = function()
 			local w = vim.fn.bufwinid(buf)
-			if w ~= -1 then apply(w) end
+			if w ~= -1 then
+				apply(w)
+			end
 		end,
 	})
 	vim.api.nvim_create_autocmd("BufDelete", {
@@ -229,10 +235,10 @@ end
 local function create_buf(name)
 	local buf = vim.api.nvim_create_buf(true, true)
 	vim.api.nvim_buf_set_name(buf, name)
-	vim.bo[buf].buftype  = "nofile"
+	vim.bo[buf].buftype = "nofile"
 	vim.bo[buf].bufhidden = "hide"
-	vim.bo[buf].swapfile  = false
-	vim.bo[buf].filetype  = "todoist"
+	vim.bo[buf].swapfile = false
+	vim.bo[buf].filetype = "todoist"
 	return buf
 end
 
@@ -246,12 +252,12 @@ local function set_lines(buf, lines)
 	local was_modifiable = vim.bo[buf].modifiable
 	if not was_modifiable then
 		vim.bo[buf].modifiable = true
-		vim.bo[buf].readonly   = false
+		vim.bo[buf].readonly = false
 	end
 	vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
 	if not was_modifiable then
 		vim.bo[buf].modifiable = false
-		vim.bo[buf].readonly   = true
+		vim.bo[buf].readonly = true
 	end
 	ts_start(buf)
 end
@@ -286,10 +292,12 @@ local function restore_cursor(buf, anchor, fallback_row)
 end
 
 local function nav_redraw(buf, lines)
-	if not lines then return end
-	local old_row  = vim.api.nvim_win_get_cursor(0)[1]
+	if not lines then
+		return
+	end
+	local old_row = vim.api.nvim_win_get_cursor(0)[1]
 	local old_line = vim.api.nvim_buf_get_lines(buf, old_row - 1, old_row, false)[1] or ""
-	local anchor   = line_anchor(old_line)
+	local anchor = line_anchor(old_line)
 	set_lines(buf, lines)
 	apply_extmark_conceal(buf)
 	restore_cursor(buf, anchor, old_row)
@@ -297,7 +305,7 @@ end
 
 -- ─── Toggle complete under cursor ────────────────────────────────────────────────────
 local function toggle_complete(buf)
-	local row  = vim.api.nvim_win_get_cursor(0)[1]
+	local row = vim.api.nvim_win_get_cursor(0)[1]
 	local line = vim.api.nvim_buf_get_lines(buf, row - 1, row, false)[1] or ""
 
 	if nav.current_view() == nav.VIEW.COMPLETED then
@@ -317,7 +325,7 @@ local function toggle_complete(buf)
 			vim.notify("Marked for restore: " .. task_id, vim.log.levels.INFO, { title = "todoist-nvim" })
 		end
 		local all_lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-		all_lines[row]  = new_line
+		all_lines[row] = new_line
 		set_lines(buf, all_lines)
 		apply_extmark_conceal(buf, row)
 		return
@@ -354,14 +362,16 @@ local function sync_restores(buf)
 	end
 	vim.notify("Restoring " .. #ids .. " task(s)…", vim.log.levels.INFO, { title = "todoist-nvim" })
 
-	local done   = 0
+	local done = 0
 	local failed = 0
 	for _, task_id in ipairs(ids) do
 		local err = {}
 		vim.fn.jobstart({ binary, "reopen", task_id }, {
 			stdout_buffered = true,
 			stderr_buffered = true,
-			on_stderr = function(_, d) err = d end,
+			on_stderr = function(_, d)
+				err = d
+			end,
 			on_exit = function(_, code)
 				done = done + 1
 				if code ~= 0 then
@@ -387,7 +397,9 @@ local function sync_restores(buf)
 						end
 						vim.defer_fn(function()
 							M.completed(buf)
-							vim.defer_fn(function() M.open() end, 300)
+							vim.defer_fn(function()
+								M.open()
+							end, 300)
 						end, 300)
 					end)
 				end
@@ -399,15 +411,27 @@ end
 -- ─── Buffer keymaps ───────────────────────────────────────────────────────────
 local function setup_keymaps(buf)
 	local o = { buffer = buf, noremap = true, silent = true }
-	vim.keymap.set("n", "q",            "<cmd>bdelete<cr>", vim.tbl_extend("force", o, { desc = "Close" }))
+	vim.keymap.set("n", "<Esc>", "<cmd>bdelete<cr>", vim.tbl_extend("force", o, { desc = "Close" }))
 	vim.keymap.set("n", "r", function()
-		if nav.current_view() == nav.VIEW.COMPLETED then M.completed(buf) else M.open() end
+		if nav.current_view() == nav.VIEW.COMPLETED then
+			M.completed(buf)
+		else
+			M.open()
+		end
 	end, vim.tbl_extend("force", o, { desc = "Refresh" }))
 	vim.keymap.set("n", "<C-r>", function()
-		if nav.current_view() == nav.VIEW.COMPLETED then M.completed(buf) else M.open() end
+		if nav.current_view() == nav.VIEW.COMPLETED then
+			M.completed(buf)
+		else
+			M.open()
+		end
 	end, vim.tbl_extend("force", o, { desc = "Refresh" }))
 	vim.keymap.set("n", "<localleader>s", function()
-		if nav.current_view() == nav.VIEW.COMPLETED then sync_restores(buf) else M.sync() end
+		if nav.current_view() == nav.VIEW.COMPLETED then
+			sync_restores(buf)
+		else
+			M.sync()
+		end
 	end, vim.tbl_extend("force", o, { desc = "Sync" }))
 	-- \c: toggle completed view — if already in completed, go back; otherwise open it
 	vim.keymap.set("n", "<localleader>c", function()
@@ -450,7 +474,7 @@ end
 
 -- ─── open() ──────────────────────────────────────────────────────────────────────
 function M._fill_active_buffer(lines)
-	local buf    = find_buf(ACTIVE_BUF_NAME)
+	local buf = find_buf(ACTIVE_BUF_NAME)
 	local is_new = not buf
 	if is_new then
 		buf = create_buf(ACTIVE_BUF_NAME)
@@ -485,8 +509,12 @@ function M.open()
 	vim.fn.jobstart({ binary, "fetch" }, {
 		stdout_buffered = true,
 		stderr_buffered = true,
-		on_stdout = function(_, d) out = d end,
-		on_stderr = function(_, d) err = d end,
+		on_stdout = function(_, d)
+			out = d
+		end,
+		on_stderr = function(_, d)
+			err = d
+		end,
 		on_exit = function(_, code)
 			if code ~= 0 then
 				local msg = table.concat(err, "\n"):gsub("%s+$", "")
@@ -495,8 +523,12 @@ function M.open()
 				end)
 				return
 			end
-			if out[#out] == "" then table.remove(out) end
-			vim.schedule(function() M._fill_active_buffer(out) end)
+			if out[#out] == "" then
+				table.remove(out)
+			end
+			vim.schedule(function()
+				M._fill_active_buffer(out)
+			end)
 		end,
 	})
 end
@@ -520,8 +552,12 @@ function M.completed(existing_buf)
 	vim.fn.jobstart({ binary, "completed" }, {
 		stdout_buffered = true,
 		stderr_buffered = true,
-		on_stdout = function(_, d) out = d end,
-		on_stderr = function(_, d) err = d end,
+		on_stdout = function(_, d)
+			out = d
+		end,
+		on_stderr = function(_, d)
+			err = d
+		end,
 		on_exit = function(_, code)
 			if code ~= 0 then
 				local msg = table.concat(err, "\n"):gsub("%s+$", "")
@@ -530,7 +566,9 @@ function M.completed(existing_buf)
 				end)
 				return
 			end
-			if out[#out] == "" then table.remove(out) end
+			if out[#out] == "" then
+				table.remove(out)
+			end
 			vim.schedule(function()
 				nav.load_completed(out)
 				local lines = nav.enter_completed()
@@ -552,8 +590,8 @@ function M.restore_under_cursor(buf)
 		vim.notify("todoist-nvim: binary not found.", vim.log.levels.ERROR, { title = "todoist-nvim" })
 		return
 	end
-	local row     = vim.api.nvim_win_get_cursor(0)[1]
-	local line    = vim.api.nvim_buf_get_lines(buf, row - 1, row, false)[1] or ""
+	local row = vim.api.nvim_win_get_cursor(0)[1]
+	local line = vim.api.nvim_buf_get_lines(buf, row - 1, row, false)[1] or ""
 	local task_id = line:match("id:(%S+)")
 	if not task_id then
 		vim.notify("No task ID found on this line.\nRaw: " .. line, vim.log.levels.WARN, { title = "todoist-nvim" })
@@ -564,8 +602,12 @@ function M.restore_under_cursor(buf)
 	vim.fn.jobstart({ binary, "reopen", task_id }, {
 		stdout_buffered = true,
 		stderr_buffered = true,
-		on_stdout = function(_, d) out = d end,
-		on_stderr = function(_, d) err = d end,
+		on_stdout = function(_, d)
+			out = d
+		end,
+		on_stderr = function(_, d)
+			err = d
+		end,
 		on_exit = function(_, code)
 			if code ~= 0 then
 				local msg = table.concat(err, "\n"):gsub("%s+$", "")
@@ -582,7 +624,9 @@ function M.restore_under_cursor(buf)
 				vim.notify("Task restored!", vim.log.levels.INFO, { title = "todoist-nvim" })
 				vim.defer_fn(function()
 					M.completed(buf)
-					vim.defer_fn(function() M.open() end, 300)
+					vim.defer_fn(function()
+						M.open()
+					end, 300)
 				end, 300)
 			end)
 		end,
@@ -602,7 +646,11 @@ function M.sync()
 		return
 	end
 	if nav.current_view() == nav.VIEW.COMPLETED then
-		vim.notify("Cannot sync from completed view. Use <BS> to go back.", vim.log.levels.WARN, { title = "todoist-nvim" })
+		vim.notify(
+			"Cannot sync from completed view. Use <BS> to go back.",
+			vim.log.levels.WARN,
+			{ title = "todoist-nvim" }
+		)
 		return
 	end
 	local lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
@@ -617,8 +665,12 @@ function M.sync()
 	vim.fn.jobstart({ binary, "sync", tmpfile }, {
 		stdout_buffered = true,
 		stderr_buffered = true,
-		on_stdout = function(_, d) out = d end,
-		on_stderr = function(_, d) err = d end,
+		on_stdout = function(_, d)
+			out = d
+		end,
+		on_stderr = function(_, d)
+			err = d
+		end,
 		on_exit = function(_, code)
 			vim.fn.delete(tmpfile)
 			if code ~= 0 then
@@ -631,7 +683,9 @@ function M.sync()
 			local summary = table.concat(out, "\n"):gsub("%s+$", "")
 			vim.schedule(function()
 				vim.notify(summary, vim.log.levels.INFO, { title = "todoist-nvim sync" })
-				vim.defer_fn(function() M.open() end, 500)
+				vim.defer_fn(function()
+					M.open()
+				end, 500)
 			end)
 		end,
 	})
