@@ -4,7 +4,7 @@
 
 local M = {}
 
--- ─── View constants ───────────────────────────────────────────────────────────
+-- ─── View constants ──────────────────────────────────────────────────────────────
 
 M.VIEW = {
 	ALL_PROJECTS = "all_projects",
@@ -14,7 +14,7 @@ M.VIEW = {
 }
 local V = M.VIEW
 
--- ─── State ────────────────────────────────────────────────────────────────────
+-- ─── State ───────────────────────────────────────────────────────────────────────
 
 local state = {
 	view = V.ALL_PROJECTS,
@@ -29,7 +29,7 @@ local state = {
 -- Each task = {id, content, checked, indent, subtasks=[…]}
 local cache = { projects = {} }
 
--- ─── Parsing helpers ──────────────────────────────────────────────────────────
+-- ─── Parsing helpers ───────────────────────────────────────────────────────────
 
 local function extract_id(line, key)
 	-- Matches <!-- key:VALUE -->
@@ -44,7 +44,7 @@ local function leading_spaces(line)
 	return #(line:match("^(%s*)"))
 end
 
--- ─── Hierarchy loader ─────────────────────────────────────────────────────────
+-- ─── Hierarchy loader ───────────────────────────────────────────────────────────
 -- Call this after every fetch to rebuild the in-memory tree.
 -- Handles the format that fetch.rs actually emits:
 --   # ProjectName <!-- project:ID -->
@@ -119,7 +119,7 @@ function M.load(lines)
 	cache.projects = projects
 end
 
--- ─── Finders ─────────────────────────────────────────────────────────────────
+-- ─── Finders ─────────────────────────────────────────────────────────────────────
 
 local function find_project(pid)
 	for _, p in ipairs(cache.projects) do
@@ -162,7 +162,28 @@ local function find_task_anywhere(proj, tid)
 	end
 end
 
--- ─── Renderers ────────────────────────────────────────────────────────────────
+-- Find which project a section belongs to (for cross-project lookup)
+local function find_project_by_section(sid)
+	for _, p in ipairs(cache.projects) do
+		for _, s in ipairs(p.sections) do
+			if s.id == sid then
+				return p, s
+			end
+		end
+	end
+end
+
+-- Find which project (and optional section) a task belongs to
+local function find_project_by_task(tid)
+	for _, p in ipairs(cache.projects) do
+		local t, sec = find_task_anywhere(p, tid)
+		if t then
+			return p, sec, t
+		end
+	end
+end
+
+-- ─── Renderers ────────────────────────────────────────────────────────────────────
 
 local function fmt_task(task, extra_indent)
 	extra_indent = extra_indent or ""
@@ -179,6 +200,9 @@ local function render_all_projects()
 				table.insert(out, "")
 				for _, t in ipairs(proj.tasks) do
 					table.insert(out, fmt_task(t))
+					for _, sub in ipairs(t.subtasks) do
+						table.insert(out, fmt_task(sub, "    "))
+					end
 				end
 			end
 			for _, sec in ipairs(proj.sections) do
@@ -186,6 +210,9 @@ local function render_all_projects()
 				table.insert(out, "## " .. sec.name .. " <!-- section:" .. sec.id .. " -->")
 				for _, t in ipairs(sec.tasks) do
 					table.insert(out, fmt_task(t))
+					for _, sub in ipairs(t.subtasks) do
+						table.insert(out, fmt_task(sub, "    "))
+					end
 				end
 			end
 		end
@@ -214,6 +241,9 @@ local function render_single_project(proj)
 		if not collapsed then
 			for _, t in ipairs(sec.tasks) do
 				table.insert(out, fmt_task(t))
+				for _, sub in ipairs(t.subtasks) do
+					table.insert(out, fmt_task(sub, "    "))
+				end
 			end
 		end
 		table.insert(out, "")
@@ -272,7 +302,7 @@ local function render_current()
 	return {}
 end
 
--- ─── Item under cursor ────────────────────────────────────────────────────────
+-- ─── Item under cursor ───────────────────────────────────────────────────────────
 
 local function cursor_item(buf)
 	local row = vim.api.nvim_win_get_cursor(0)[1]
@@ -284,7 +314,7 @@ local function cursor_item(buf)
 	}
 end
 
--- ─── Public navigation API ────────────────────────────────────────────────────
+-- ─── Public navigation API ────────────────────────────────────────────────────────
 
 function M.reset()
 	state.view = V.ALL_PROJECTS
@@ -297,7 +327,9 @@ function M.lines()
 	return render_current()
 end
 
---- Drill one level deeper.  Returns new lines, or nil if no transition.
+--- Smart enter: jump directly to the view matching what's under the cursor,
+--- regardless of the current view. Priority: task > section > project.
+--- Returns new lines, or nil if nothing actionable under cursor.
 function M.enter(buf)
 	local item = cursor_item(buf)
 	state.collapsed = false
@@ -309,33 +341,51 @@ function M.enter(buf)
 		return render_current()
 	end
 
-	if state.view == V.ALL_PROJECTS then
-		if item.project_id then
-			return push(V.SINGLE_PROJECT, { project_id = item.project_id })
+	-- Task under cursor — jump straight to SINGLE_TASK from any view
+	if item.task_id then
+		-- Resolve project_id regardless of current view
+		local project_id = state.ctx.project_id
+		if not project_id then
+			local proj = find_project_by_task(item.task_id)
+			project_id = proj and proj.id
 		end
-	elseif state.view == V.SINGLE_PROJECT then
-		if item.section_id then
-			return push(V.SINGLE_SECTION, {
-				project_id = state.ctx.project_id,
-				section_id = item.section_id,
-			})
-		elseif item.task_id then
+		if project_id then
+			-- Don't re-push if we're already viewing this task
+			if state.view == V.SINGLE_TASK and state.ctx.task_id == item.task_id then
+				return nil
+			end
 			return push(V.SINGLE_TASK, {
-				project_id = state.ctx.project_id,
-				task_id = item.task_id,
-			})
-		end
-	elseif state.view == V.SINGLE_SECTION then
-		if item.task_id then
-			return push(V.SINGLE_TASK, {
-				project_id = state.ctx.project_id,
+				project_id = project_id,
 				section_id = state.ctx.section_id,
 				task_id = item.task_id,
 			})
 		end
-	elseif state.view == V.SINGLE_TASK then
-		-- Leaf — no deeper level
-		return nil
+	end
+
+	-- Section under cursor — jump straight to SINGLE_SECTION from any view
+	if item.section_id then
+		local project_id = state.ctx.project_id
+		if not project_id then
+			local proj = find_project_by_section(item.section_id)
+			project_id = proj and proj.id
+		end
+		if project_id then
+			if state.view == V.SINGLE_SECTION and state.ctx.section_id == item.section_id then
+				return nil
+			end
+			return push(V.SINGLE_SECTION, {
+				project_id = project_id,
+				section_id = item.section_id,
+			})
+		end
+	end
+
+	-- Project under cursor — jump to SINGLE_PROJECT from any view
+	if item.project_id then
+		if state.view == V.SINGLE_PROJECT and state.ctx.project_id == item.project_id then
+			return nil
+		end
+		return push(V.SINGLE_PROJECT, { project_id = item.project_id })
 	end
 
 	return nil
