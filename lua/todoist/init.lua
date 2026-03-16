@@ -123,7 +123,7 @@ end
 local function set_conceal(buf)
 	local function apply(win)
 		vim.wo[win].conceallevel = 3
-		vim.wo[win].concealcursor = "nvic"
+		vim.wo[win].concealcursor = "vic"
 	end
 	local win = vim.fn.bufwinid(buf)
 	if win ~= -1 then
