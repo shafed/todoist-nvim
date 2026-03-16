@@ -11,6 +11,9 @@
 --   <localleader>s  sync (active buffer only)
 --   <localleader>r  restore task under cursor (completed buffer only)
 
+-- ─── ADD near the top, after `local M = {}` ──────────────────────────────────
+local nav = require("todoist.nav")
+
 local M = {}
 
 -- ─── Namespace for extmarks (ID concealment) ─────────────────────────────────
@@ -32,6 +35,17 @@ local function find_binary()
 		end
 	end
 	return nil
+end
+
+--- Writes new lines to buf, re-applies concealment, and resets cursor to top.
+--- `lines` may be nil (no-op).
+local function nav_redraw(buf, lines)
+	if not lines then
+		return
+	end
+	set_lines(buf, lines)
+	apply_extmark_conceal(buf)
+	vim.api.nvim_win_set_cursor(0, { 1, 0 })
 end
 
 -- ─── Buffer registry ─────────────────────────────────────────────────────────
@@ -152,6 +166,8 @@ end
 
 local function setup_active_keymaps(buf)
 	local o = { buffer = buf, noremap = true, silent = true }
+
+	-- Existing bindings
 	vim.keymap.set("n", "q", "<cmd>bdelete<cr>", vim.tbl_extend("force", o, { desc = "Close" }))
 	vim.keymap.set("n", "<C-r>", function()
 		M.open()
@@ -163,7 +179,27 @@ local function setup_active_keymaps(buf)
 		M.completed()
 	end, vim.tbl_extend("force", o, { desc = "Open Completed" }))
 
-	-- Re-apply concealment after any text change (editing tasks)
+	-- Navigation: drill down
+	vim.keymap.set("n", "<CR>", function()
+		nav_redraw(buf, nav.enter(buf))
+	end, vim.tbl_extend("force", o, { desc = "Navigate deeper" }))
+
+	-- Navigation: go up
+	vim.keymap.set("n", "<BS>", function()
+		nav_redraw(buf, nav.back())
+	end, vim.tbl_extend("force", o, { desc = "Navigate up" }))
+
+	-- Folding: collapse
+	vim.keymap.set("n", "zf", function()
+		nav_redraw(buf, nav.fold())
+	end, vim.tbl_extend("force", o, { desc = "Collapse current view" }))
+
+	-- Folding: expand
+	vim.keymap.set("n", "zu", function()
+		nav_redraw(buf, nav.unfold())
+	end, vim.tbl_extend("force", o, { desc = "Expand current view" }))
+
+	-- Re-apply concealment after any text change
 	vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
 		buffer = buf,
 		callback = function()
@@ -207,10 +243,15 @@ end
 function M._fill_active_buffer(lines)
 	local buf = find_buf(ACTIVE_BUF_NAME)
 	if not buf then
-		buf = create_buf(ACTIVE_BUF_NAME, false) -- editable
+		buf = create_buf(ACTIVE_BUF_NAME, false)
 		setup_active_keymaps(buf)
 	end
-	set_lines(buf, lines)
+
+	-- Build hierarchy cache and reset to top-level view
+	nav.load(lines)
+	nav.reset()
+
+	set_lines(buf, nav.lines())
 	focus_buf(buf)
 	start_treesitter(buf)
 	apply_extmark_conceal(buf)
