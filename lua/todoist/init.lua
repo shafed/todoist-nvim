@@ -460,7 +460,7 @@ local function setup_keymaps(buf)
 	vim.keymap.set("n", "zu", function()
 		nav_redraw(buf, nav.unfold())
 	end, vim.tbl_extend("force", o, { desc = "Expand" }))
-	vim.keymap.set("n", "x", function()
+	vim.keymap.set("n", "M-x", function()
 		toggle_complete(buf)
 	end, vim.tbl_extend("force", o, { desc = "Toggle complete / mark for restore" }))
 	vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
