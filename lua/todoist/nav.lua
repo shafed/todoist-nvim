@@ -194,6 +194,7 @@ local function render_all_projects()
 		for _, sec in ipairs(proj.sections) do
 			table.insert(out, "")
 			table.insert(out, "### " .. sec.name .. " <!-- section:" .. sec.id .. " -->")
+			table.insert(out, "")
 			emit_tasks(out, sec.tasks)
 		end
 		table.insert(out, "")
@@ -211,6 +212,7 @@ local function render_single_project(proj)
 	for _, sec in ipairs(proj.sections) do
 		table.insert(out, "")
 		table.insert(out, "### " .. sec.name .. " <!-- section:" .. sec.id .. " -->")
+		table.insert(out, "")
 		emit_tasks(out, sec.tasks)
 	end
 	return out
