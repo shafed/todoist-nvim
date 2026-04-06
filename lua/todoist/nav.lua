@@ -194,14 +194,14 @@ end
 local function render_all_projects()
 	local out = {}
 	for _, proj in ipairs(cache.projects) do
-		table.insert(out, "# " .. proj.name .. " <!-- project:" .. proj.id .. " -->")
+		table.insert(out, "## " .. proj.name .. " <!-- project:" .. proj.id .. " -->")
 		if #proj.tasks > 0 then
 			blank(out)
 			emit_tasks(out, proj.tasks)
 		end
 		for _, sec in ipairs(proj.sections) do
 			blank(out)
-			table.insert(out, "## " .. sec.name .. " <!-- section:" .. sec.id .. " -->")
+			table.insert(out, "### " .. sec.name .. " <!-- section:" .. sec.id .. " -->")
 			emit_tasks(out, sec.tasks)
 		end
 		blank(out)
@@ -211,14 +211,14 @@ end
 
 local function render_single_project(proj)
 	local out = {}
-	table.insert(out, "# " .. proj.name .. " <!-- project:" .. proj.id .. " -->")
+	table.insert(out, "## " .. proj.name .. " <!-- project:" .. proj.id .. " -->")
 	if #proj.tasks > 0 then
 		blank(out)
 		emit_tasks(out, proj.tasks)
 	end
 	for _, sec in ipairs(proj.sections) do
 		blank(out)
-		table.insert(out, "## " .. sec.name .. " <!-- section:" .. sec.id .. " -->")
+		table.insert(out, "### " .. sec.name .. " <!-- section:" .. sec.id .. " -->")
 		emit_tasks(out, sec.tasks)
 	end
 	return out
@@ -226,8 +226,8 @@ end
 
 local function render_single_section(sec, proj)
 	local out = {}
-	table.insert(out, "# " .. proj.name .. " <!-- project:" .. proj.id .. " -->")
-	table.insert(out, "## " .. sec.name .. " <!-- section:" .. sec.id .. " -->")
+	table.insert(out, "## " .. proj.name .. " <!-- project:" .. proj.id .. " -->")
+	table.insert(out, "### " .. sec.name .. " <!-- section:" .. sec.id .. " -->")
 	blank(out)
 	emit_tasks(out, sec.tasks)
 	return out
@@ -235,12 +235,12 @@ end
 
 local function render_single_task(task, proj)
 	local out = {}
-	table.insert(out, "# " .. proj.name .. " <!-- project:" .. proj.id .. " -->")
+	table.insert(out, "## " .. proj.name .. " <!-- project:" .. proj.id .. " -->")
 	blank(out)
 	table.insert(out, fmt_task(task))
 	if not state.collapsed and #task.subtasks > 0 then
 		blank(out)
-		table.insert(out, "### Subtasks")
+		table.insert(out, "#### Subtasks")
 		blank(out)
 		for _, sub in ipairs(task.subtasks) do
 			table.insert(out, fmt_task(sub, "    "))
@@ -251,7 +251,7 @@ end
 
 local function render_completed()
 	local out = {}
-	table.insert(out, "# Completed Tasks (last 30 days)")
+	table.insert(out, "## Completed Tasks (last 30 days)")
 	blank(out)
 	for _, task in ipairs(cache.completed) do
 		table.insert(out, "- [x] " .. task.content .. " <!-- id:" .. task.id .. " -->")
