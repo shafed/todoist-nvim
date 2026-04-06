@@ -8,9 +8,9 @@
 -- Keymaps (inside Todoist buffer):
 --   q               close buffer
 --   r / <C-r>       refresh
---   <CR>            toggle fold (collapse / expand)
+--   <CR>            toggle fold under cursor (za)
 --   <BS>            navigate up  (from Completed view: returns to previous view)
---   zf / zu         fold / unfold
+--   zf / zu         fold all (zM) / unfold all (zR)
 --   x               toggle task complete (active view)
 --                   mark/unmark task for restore (completed view)
 --   <localleader>s  sync (active view) / sync restores (completed view)
@@ -195,8 +195,11 @@ end
 -- ─── conceallevel ──────────────────────────────────────────────────────────────────────
 local function set_conceal(buf)
 	local function apply(win)
-		vim.wo[win].conceallevel = 3
+		vim.wo[win].conceallevel  = 3
 		vim.wo[win].concealcursor = "nvic"
+		vim.wo[win].foldmethod    = "expr"
+		vim.wo[win].foldexpr      = "getline(v:lnum)=~'^## '?'>1':getline(v:lnum)=~'^### '?'>2':'='"
+		vim.wo[win].foldlevel     = 99
 	end
 	local win = vim.fn.bufwinid(buf)
 	if win ~= -1 then
@@ -454,18 +457,12 @@ local function setup_keymaps(buf)
 	vim.keymap.set("n", "<S-Tab>", function()
 		nav_redraw(buf, nav.back())
 	end, vim.tbl_extend("force", o, { desc = "Navigate up" }))
-	vim.keymap.set("n", "zf", function()
-		nav_redraw(buf, nav.fold())
-	end, vim.tbl_extend("force", o, { desc = "Collapse" }))
-	vim.keymap.set("n", "zu", function()
-		nav_redraw(buf, nav.unfold())
-	end, vim.tbl_extend("force", o, { desc = "Expand" }))
+	vim.keymap.set("n", "zf", "zM", vim.tbl_extend("force", o, { desc = "Collapse all" }))
+	vim.keymap.set("n", "zu", "zR", vim.tbl_extend("force", o, { desc = "Expand all" }))
 	vim.keymap.set("n", "<M-x>", function()
 		toggle_complete(buf)
 	end, vim.tbl_extend("force", o, { desc = "Toggle complete / mark for restore" }))
-	vim.keymap.set("n", "<CR>", function()
-		nav_redraw(buf, nav.toggle_fold(buf))
-	end, vim.tbl_extend("force", o, { desc = "Toggle fold" }))
+	vim.keymap.set("n", "<CR>", "za", vim.tbl_extend("force", o, { desc = "Toggle fold" }))
 	vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
 		buffer = buf,
 		callback = function()

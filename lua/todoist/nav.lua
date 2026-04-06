@@ -1,6 +1,6 @@
 -- lua/todoist/nav.lua
--- Navigation and folding for todoist-nvim.
--- No Neovim fold objects are used; folded set drives re-rendering.
+-- Navigation for todoist-nvim.
+-- Folding is handled natively by Neovim (foldmethod=expr on the window).
 
 local M = {}
 
@@ -21,7 +21,6 @@ local state = {
 	view    = V.ALL_PROJECTS,
 	history = {},
 	ctx     = {},
-	folded  = {},  -- set of project/section IDs that are collapsed
 }
 
 -- ─── Data cache ───────────────────────────────────────────────────────────────
@@ -188,28 +187,6 @@ local function render_all_projects()
 	local out = {}
 	for _, proj in ipairs(cache.projects) do
 		table.insert(out, "## " .. proj.name .. " <!-- project:" .. proj.id .. " -->")
-		if not state.folded[proj.id] then
-			if #proj.tasks > 0 then
-				table.insert(out, "")
-				emit_tasks(out, proj.tasks)
-			end
-			for _, sec in ipairs(proj.sections) do
-				table.insert(out, "")
-				table.insert(out, "### " .. sec.name .. " <!-- section:" .. sec.id .. " -->")
-				if not state.folded[sec.id] then
-					emit_tasks(out, sec.tasks)
-				end
-			end
-			table.insert(out, "")
-		end
-	end
-	return out
-end
-
-local function render_single_project(proj)
-	local out = {}
-	table.insert(out, "## " .. proj.name .. " <!-- project:" .. proj.id .. " -->")
-	if not state.folded[proj.id] then
 		if #proj.tasks > 0 then
 			table.insert(out, "")
 			emit_tasks(out, proj.tasks)
@@ -217,10 +194,24 @@ local function render_single_project(proj)
 		for _, sec in ipairs(proj.sections) do
 			table.insert(out, "")
 			table.insert(out, "### " .. sec.name .. " <!-- section:" .. sec.id .. " -->")
-			if not state.folded[sec.id] then
-				emit_tasks(out, sec.tasks)
-			end
+			emit_tasks(out, sec.tasks)
 		end
+		table.insert(out, "")
+	end
+	return out
+end
+
+local function render_single_project(proj)
+	local out = {}
+	table.insert(out, "## " .. proj.name .. " <!-- project:" .. proj.id .. " -->")
+	if #proj.tasks > 0 then
+		table.insert(out, "")
+		emit_tasks(out, proj.tasks)
+	end
+	for _, sec in ipairs(proj.sections) do
+		table.insert(out, "")
+		table.insert(out, "### " .. sec.name .. " <!-- section:" .. sec.id .. " -->")
+		emit_tasks(out, sec.tasks)
 	end
 	return out
 end
@@ -229,10 +220,8 @@ local function render_single_section(sec, proj)
 	local out = {}
 	table.insert(out, "## " .. proj.name .. " <!-- project:" .. proj.id .. " -->")
 	table.insert(out, "### " .. sec.name .. " <!-- section:" .. sec.id .. " -->")
-	if not state.folded[sec.id] then
-		table.insert(out, "")
-		emit_tasks(out, sec.tasks)
-	end
+	table.insert(out, "")
+	emit_tasks(out, sec.tasks)
 	return out
 end
 
@@ -304,7 +293,6 @@ function M.reset()
 	state.view    = V.ALL_PROJECTS
 	state.history = {}
 	state.ctx     = {}
-	state.folded  = {}
 end
 
 function M.lines()
@@ -312,11 +300,7 @@ function M.lines()
 end
 
 function M.full_lines()
-	local saved = state.folded
-	state.folded = {}
-	local out = render_all_projects()
-	state.folded = saved
-	return out
+	return render_all_projects()
 end
 
 function M.current_view()
@@ -325,15 +309,13 @@ end
 
 function M.enter_completed()
 	table.insert(state.history, { view = state.view, ctx = vim.deepcopy(state.ctx) })
-	state.view   = V.COMPLETED
-	state.ctx    = {}
-	state.folded = {}
+	state.view = V.COMPLETED
+	state.ctx  = {}
 	return render_completed()
 end
 
 function M.enter(buf)
 	local item = cursor_item(buf)
-	state.folded = {}
 
 	if state.view == V.COMPLETED then
 		return nil
@@ -393,34 +375,9 @@ end
 
 function M.back()
 	if #state.history == 0 then return nil end
-	local prev    = table.remove(state.history)
-	state.view    = prev.view
-	state.ctx     = prev.ctx
-	state.folded  = {}
-	return render_current()
-end
-
-function M.toggle_fold(buf)
-	local row  = vim.api.nvim_win_get_cursor(0)[1]
-	local line = vim.api.nvim_buf_get_lines(buf, row - 1, row, false)[1] or ""
-	local id = extract_id(line, "project") or extract_id(line, "section")
-	if not id then return nil end
-	state.folded[id] = state.folded[id] and nil or true
-	return render_current()
-end
-
-function M.fold()
-	for _, proj in ipairs(cache.projects) do
-		state.folded[proj.id] = true
-		for _, sec in ipairs(proj.sections) do
-			state.folded[sec.id] = true
-		end
-	end
-	return render_current()
-end
-
-function M.unfold()
-	state.folded = {}
+	local prev = table.remove(state.history)
+	state.view = prev.view
+	state.ctx  = prev.ctx
 	return render_current()
 end
 
