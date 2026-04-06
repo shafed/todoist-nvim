@@ -397,6 +397,11 @@ function M.back()
 	return render_current()
 end
 
+function M.toggle_fold()
+	state.collapsed = not state.collapsed
+	return render_current()
+end
+
 function M.fold()
 	state.collapsed = true
 	return render_current()

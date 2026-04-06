@@ -8,7 +8,7 @@
 -- Keymaps (inside Todoist buffer):
 --   q               close buffer
 --   r / <C-r>       refresh
---   <CR>            toggle fold (za) and center
+--   <CR>            toggle fold (collapse / expand)
 --   <BS>            navigate up  (from Completed view: returns to previous view)
 --   zf / zu         fold / unfold
 --   x               toggle task complete (active view)
@@ -464,14 +464,7 @@ local function setup_keymaps(buf)
 		toggle_complete(buf)
 	end, vim.tbl_extend("force", o, { desc = "Toggle complete / mark for restore" }))
 	vim.keymap.set("n", "<CR>", function()
-		local line = vim.fn.line(".")
-		local foldlevel = vim.fn.foldlevel(line)
-		if foldlevel == 0 then
-			vim.notify("No fold found", vim.log.levels.INFO)
-		else
-			vim.cmd("normal! za")
-			vim.cmd("normal! zz")
-		end
+		nav_redraw(buf, nav.toggle_fold())
 	end, vim.tbl_extend("force", o, { desc = "Toggle fold" }))
 	vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
 		buffer = buf,
