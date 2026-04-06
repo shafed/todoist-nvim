@@ -51,18 +51,18 @@ function M.load(lines)
 	local cur_sec  = nil
 
 	for _, line in ipairs(lines) do
-		if line:match("^# ") and not line:match("^## ") then
+		if line:match("^## ") and not line:match("^### ") then
 			local pid = extract_id(line, "project")
 			if pid then
-				local name = strip_comment(line:sub(3))
+				local name = strip_comment(line:sub(4))
 				cur_proj = { id = pid, name = name, sections = {}, tasks = {} }
 				table.insert(projects, cur_proj)
 				cur_sec = nil
 			end
-		elseif line:match("^## ") and not line:match("^### ") then
+		elseif line:match("^### ") and not line:match("^#### ") then
 			local sid = extract_id(line, "section")
 			if sid and cur_proj then
-				local name = strip_comment(line:sub(4))
+				local name = strip_comment(line:sub(5))
 				cur_sec = { id = sid, name = name, project_id = cur_proj.id, tasks = {} }
 				table.insert(cur_proj.sections, cur_sec)
 			end
@@ -404,6 +404,11 @@ end
 
 function M.unfold()
 	state.collapsed = false
+	return render_current()
+end
+
+function M.fold_toggle()
+	state.collapsed = not state.collapsed
 	return render_current()
 end
 

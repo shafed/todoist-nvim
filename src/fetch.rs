@@ -156,7 +156,7 @@ fn render(
         };
 
         out.push_str(&format!(
-            "# {} <!-- project:{} -->\n\n",
+            "## {} <!-- project:{} -->\n\n",
             project.name, project.id
         ));
 
@@ -177,7 +177,7 @@ fn render(
                     continue;
                 }
                 out.push_str(&format!(
-                    "## {} <!-- section:{} -->\n\n",
+                    "### {} <!-- section:{} -->\n\n",
                     sec.name, sec.id
                 ));
                 for task in tasks_in_sec {
@@ -189,7 +189,7 @@ fn render(
     }
 
     if out.is_empty() {
-        return Ok("# No active tasks\n\nAll projects appear to be empty.\n".to_string());
+        return Ok("## No active tasks\n\nAll projects appear to be empty.\n".to_string());
     }
 
     Ok(out)

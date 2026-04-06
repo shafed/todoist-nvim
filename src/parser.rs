@@ -54,33 +54,33 @@ pub fn parse(lines: &[String]) -> ParseResult {
     for (i, raw_line) in lines.iter().enumerate() {
         let line_num = i + 1;
 
-        // H1 = project ("# " but NOT "## ")
-        if raw_line.starts_with("# ") && !raw_line.starts_with("## ") {
+        // H2 = project ("## " but NOT "### ")
+        if raw_line.starts_with("## ") && !raw_line.starts_with("### ") {
             current_project_id = extract_comment_value(raw_line, "project:");
             current_section_id = None;
             if current_project_id.is_none() {
                 warnings.push(format!(
-                    "Line {}: H1 has no <!-- project:ID --> — tasks here won't be synced",
+                    "Line {}: H2 has no <!-- project:ID --> — tasks here won't be synced",
                     line_num
                 ));
             }
             continue;
         }
 
-        // H2 = section ("## " but NOT "### ")
-        if raw_line.starts_with("## ") && !raw_line.starts_with("### ") {
+        // H3 = section ("### " but NOT "#### ")
+        if raw_line.starts_with("### ") && !raw_line.starts_with("#### ") {
             current_section_id = extract_comment_value(raw_line, "section:");
             if current_section_id.is_none() {
                 warnings.push(format!(
-                    "Line {}: H2 has no <!-- section:ID --> — tasks here won't be synced",
+                    "Line {}: H3 has no <!-- section:ID --> — tasks here won't be synced",
                     line_num
                 ));
             }
             continue;
         }
 
-        // H3+ — ignored (e.g. "### Subtasks" label in single-task view)
-        if raw_line.starts_with("### ") {
+        // H4+ — ignored (e.g. "#### Subtasks" label in single-task view)
+        if raw_line.starts_with("#### ") {
             continue;
         }
 
@@ -155,7 +155,7 @@ mod tests {
 
     #[test]
     fn h1_is_project() {
-        let buf = lines("# Work <!-- project:p1 -->\n\n- [ ] Task <!-- id:t1 -->");
+        let buf = lines("## Work <!-- project:p1 -->\n\n- [ ] Task <!-- id:t1 -->");
         let r = parse(&buf);
         assert_eq!(r.tasks.len(), 1);
         assert_eq!(r.tasks[0].project_id.as_deref(), Some("p1"));
@@ -164,8 +164,8 @@ mod tests {
     #[test]
     fn h2_is_section() {
         let buf = lines(
-            "# Work <!-- project:p1 -->\n\
-             ## Backend <!-- section:s1 -->\n\
+            "## Work <!-- project:p1 -->\n\
+             ### Backend <!-- section:s1 -->\n\
              - [ ] Fix bug <!-- id:t1 -->"
         );
         let r = parse(&buf);
@@ -175,34 +175,27 @@ mod tests {
     #[test]
     fn four_space_indent_resolves_parent() {
         // No indent → siblings
-        let buf = lines(
-            "# Work <!-- project:p1 -->\n\
-             - [ ] Parent <!-- id:p1 -->\n\
-             - [ ] Child <!-- id:c1 -->"
-        );
+        let buf = lines("## Work <!-- project:p1 -->\n- [ ] Parent <!-- id:p1 -->\n- [ ] Child <!-- id:c1 -->");
         let r = parse(&buf);
         assert_eq!(r.tasks[1].parent_id, None);
 
         // 4-space indent → child
-        let buf2 = lines(
-            "# Work <!-- project:p1 -->\n\
-             - [ ] Parent <!-- id:p1 -->\n\
-                 - [ ] Child <!-- id:c1 -->"
-        );
+        let buf2 =
+            lines("## Work <!-- project:p1 -->\n- [ ] Parent <!-- id:p1 -->\n    - [ ] Child <!-- id:c1 -->");
         let r2 = parse(&buf2);
         assert_eq!(r2.tasks[1].parent_id.as_deref(), Some("p1"));
     }
 
     #[test]
     fn checked_task_detected() {
-        let buf = lines("# Work <!-- project:p1 -->\n\n- [x] Done <!-- id:t1 -->");
+        let buf = lines("## Work <!-- project:p1 -->\n\n- [x] Done <!-- id:t1 -->");
         let r = parse(&buf);
         assert!(r.tasks[0].checked);
     }
 
     #[test]
     fn new_task_no_id() {
-        let buf = lines("# Work <!-- project:p1 -->\n\n- [ ] Brand new task");
+        let buf = lines("## Work <!-- project:p1 -->\n\n- [ ] Brand new task");
         let r = parse(&buf);
         assert_eq!(r.tasks[0].id, None);
     }
@@ -210,10 +203,10 @@ mod tests {
     #[test]
     fn section_resets_on_new_project() {
         let buf = lines(
-            "# Work <!-- project:p1 -->\n\
-             ## Backend <!-- section:s1 -->\n\
+            "## Work <!-- project:p1 -->\n\
+             ### Backend <!-- section:s1 -->\n\
              - [ ] A <!-- id:t1 -->\n\
-             # Personal <!-- project:p2 -->\n\
+             ## Personal <!-- project:p2 -->\n\
              - [ ] B <!-- id:t2 -->"
         );
         let r = parse(&buf);
@@ -223,12 +216,7 @@ mod tests {
 
     #[test]
     fn h3_subtasks_label_ignored() {
-        let buf = lines(
-            "# Work <!-- project:p1 -->\n\
-             - [ ] Task <!-- id:t1 -->\n\
-             ### Subtasks\n\
-                 - [ ] Sub <!-- id:s1 -->"
-        );
+        let buf = lines("## Work <!-- project:p1 -->\n- [ ] Task <!-- id:t1 -->\n#### Subtasks\n    - [ ] Sub <!-- id:s1 -->");
         let r = parse(&buf);
         assert_eq!(r.tasks.len(), 2);
         assert_eq!(r.tasks[1].indent_level, 1);
