@@ -8,9 +8,11 @@
 -- Keymaps (inside Todoist buffer):
 --   q               close buffer
 --   r / <C-r>       refresh
---   <CR>            toggle fold under cursor (za)
+--   <CR>            toggle fold under cursor
 --   <BS>            navigate up  (from Completed view: returns to previous view)
---   zf / zu         fold all (zM) / unfold all (zR)
+--   zj/zk/zl/z;    fold all / level 2+ / level 3+ / level 4+
+--   zu              unfold all
+--   zi              fold heading above cursor
 --   x               toggle task complete (active view)
 --                   mark/unmark task for restore (completed view)
 --   <localleader>s  sync (active view) / sync restores (completed view)
@@ -195,11 +197,11 @@ end
 -- ─── conceallevel ──────────────────────────────────────────────────────────────────────
 local function set_conceal(buf)
 	local function apply(win)
-		vim.wo[win].conceallevel  = 3
+		vim.wo[win].conceallevel = 3
 		vim.wo[win].concealcursor = "nvic"
-		vim.wo[win].foldmethod    = "expr"
-		vim.wo[win].foldexpr      = "getline(v:lnum)=~'^## '?'>1':getline(v:lnum)=~'^### '?'>2':'='"
-		vim.wo[win].foldlevel     = 99
+		vim.wo[win].foldmethod = "expr"
+		vim.wo[win].foldexpr = "getline(v:lnum)=~'^## '?'>1':getline(v:lnum)=~'^### '?'>2':'='"
+		vim.wo[win].foldlevel = 99
 	end
 	local win = vim.fn.bufwinid(buf)
 	if win ~= -1 then
@@ -411,6 +413,31 @@ local function sync_restores(buf)
 	end
 end
 
+-- ─── Fold helpers ─────────────────────────────────────────────────────────────
+
+local function fold_headings_of_level(level)
+	vim.cmd("keepjumps normal! gg")
+	local total_lines = vim.fn.line("$")
+	for line = 1, total_lines do
+		local line_content = vim.fn.getline(line)
+		if line_content:match("^" .. string.rep("#", level) .. "%s") then
+			vim.cmd(string.format("keepjumps call cursor(%d, 1)", line))
+			if vim.fn.foldlevel(line) > 0 and vim.fn.foldclosed(line) == -1 then
+				vim.cmd("normal! za")
+			end
+		end
+	end
+end
+
+local function fold_markdown_headings(levels)
+	local saved_view = vim.fn.winsaveview()
+	for _, level in ipairs(levels) do
+		fold_headings_of_level(level)
+	end
+	vim.cmd("nohlsearch")
+	vim.fn.winrestview(saved_view)
+end
+
 -- ─── Buffer keymaps ───────────────────────────────────────────────────────────
 local function setup_keymaps(buf)
 	local o = { buffer = buf, noremap = true, silent = true }
@@ -457,12 +484,48 @@ local function setup_keymaps(buf)
 	vim.keymap.set("n", "<S-Tab>", function()
 		nav_redraw(buf, nav.back())
 	end, vim.tbl_extend("force", o, { desc = "Navigate up" }))
-	vim.keymap.set("n", "zf", "zM", vim.tbl_extend("force", o, { desc = "Collapse all" }))
-	vim.keymap.set("n", "zu", "zR", vim.tbl_extend("force", o, { desc = "Expand all" }))
+	vim.keymap.set("n", "zj", function()
+		vim.cmd("normal! zR")
+		fold_markdown_headings({ 6, 5, 4, 3, 2, 1 })
+		vim.cmd("normal! zz")
+	end, vim.tbl_extend("force", o, { desc = "Fold all headings" }))
+	vim.keymap.set("n", "zk", function()
+		vim.cmd("normal! zR")
+		fold_markdown_headings({ 6, 5, 4, 3, 2 })
+		vim.cmd("normal! zz")
+	end, vim.tbl_extend("force", o, { desc = "Fold headings level 2+" }))
+	vim.keymap.set("n", "zl", function()
+		vim.cmd("normal! zR")
+		fold_markdown_headings({ 6, 5, 4, 3 })
+		vim.cmd("normal! zz")
+	end, vim.tbl_extend("force", o, { desc = "Fold headings level 3+" }))
+	vim.keymap.set("n", "z;", function()
+		vim.cmd("normal! zR")
+		fold_markdown_headings({ 6, 5, 4 })
+		vim.cmd("normal! zz")
+	end, vim.tbl_extend("force", o, { desc = "Fold headings level 4+" }))
+	vim.keymap.set("n", "zu", function()
+		vim.cmd("normal! zR")
+		vim.cmd("normal! zz")
+	end, vim.tbl_extend("force", o, { desc = "Unfold all headings" }))
+	vim.keymap.set("n", "zi", function()
+		vim.cmd("normal gk")
+		vim.cmd("normal! za")
+		vim.cmd("normal! zz")
+	end, vim.tbl_extend("force", o, { desc = "Fold heading above cursor" }))
 	vim.keymap.set("n", "<M-x>", function()
 		toggle_complete(buf)
 	end, vim.tbl_extend("force", o, { desc = "Toggle complete / mark for restore" }))
-	vim.keymap.set("n", "<CR>", "za", vim.tbl_extend("force", o, { desc = "Toggle fold" }))
+	vim.keymap.set("n", "<CR>", function()
+		local line = vim.fn.line(".")
+		local foldlevel = vim.fn.foldlevel(line)
+		if foldlevel == 0 then
+			vim.notify("No fold found", vim.log.levels.INFO)
+		else
+			vim.cmd("normal! za")
+			vim.cmd("normal! zz")
+		end
+	end, vim.tbl_extend("force", o, { desc = "Toggle fold" }))
 	vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
 		buffer = buf,
 		callback = function()
