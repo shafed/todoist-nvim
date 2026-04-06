@@ -464,7 +464,7 @@ local function setup_keymaps(buf)
 		toggle_complete(buf)
 	end, vim.tbl_extend("force", o, { desc = "Toggle complete / mark for restore" }))
 	vim.keymap.set("n", "<CR>", function()
-		nav_redraw(buf, nav.toggle_fold())
+		nav_redraw(buf, nav.toggle_fold(buf))
 	end, vim.tbl_extend("force", o, { desc = "Toggle fold" }))
 	vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
 		buffer = buf,

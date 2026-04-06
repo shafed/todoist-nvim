@@ -1,6 +1,6 @@
 -- lua/todoist/nav.lua
 -- Navigation and folding for todoist-nvim.
--- No Neovim fold objects are used; collapsed state drives re-rendering.
+-- No Neovim fold objects are used; folded set drives re-rendering.
 
 local M = {}
 
@@ -18,10 +18,10 @@ local V = M.VIEW
 -- ─── State ───────────────────────────────────────────────────────────────────
 
 local state = {
-	view      = V.ALL_PROJECTS,
-	history   = {},
-	ctx       = {},
-	collapsed = false,
+	view    = V.ALL_PROJECTS,
+	history = {},
+	ctx     = {},
+	folded  = {},  -- set of project/section IDs that are collapsed
 }
 
 -- ─── Data cache ───────────────────────────────────────────────────────────────
@@ -173,14 +173,7 @@ local function fmt_task(task, extra_indent)
 	return extra_indent .. "- [" .. check .. "] " .. task.content .. " <!-- id:" .. task.id .. " -->"
 end
 
-local function blank(out)
-	if not state.collapsed then
-		table.insert(out, "")
-	end
-end
-
 local function emit_tasks(out, tasks)
-	if state.collapsed then return end
 	for _, t in ipairs(tasks) do
 		table.insert(out, fmt_task(t))
 		for _, sub in ipairs(t.subtasks) do
@@ -195,16 +188,20 @@ local function render_all_projects()
 	local out = {}
 	for _, proj in ipairs(cache.projects) do
 		table.insert(out, "## " .. proj.name .. " <!-- project:" .. proj.id .. " -->")
-		if #proj.tasks > 0 then
-			blank(out)
-			emit_tasks(out, proj.tasks)
+		if not state.folded[proj.id] then
+			if #proj.tasks > 0 then
+				table.insert(out, "")
+				emit_tasks(out, proj.tasks)
+			end
+			for _, sec in ipairs(proj.sections) do
+				table.insert(out, "")
+				table.insert(out, "### " .. sec.name .. " <!-- section:" .. sec.id .. " -->")
+				if not state.folded[sec.id] then
+					emit_tasks(out, sec.tasks)
+				end
+			end
+			table.insert(out, "")
 		end
-		for _, sec in ipairs(proj.sections) do
-			blank(out)
-			table.insert(out, "### " .. sec.name .. " <!-- section:" .. sec.id .. " -->")
-			emit_tasks(out, sec.tasks)
-		end
-		blank(out)
 	end
 	return out
 end
@@ -212,14 +209,18 @@ end
 local function render_single_project(proj)
 	local out = {}
 	table.insert(out, "## " .. proj.name .. " <!-- project:" .. proj.id .. " -->")
-	if #proj.tasks > 0 then
-		blank(out)
-		emit_tasks(out, proj.tasks)
-	end
-	for _, sec in ipairs(proj.sections) do
-		blank(out)
-		table.insert(out, "### " .. sec.name .. " <!-- section:" .. sec.id .. " -->")
-		emit_tasks(out, sec.tasks)
+	if not state.folded[proj.id] then
+		if #proj.tasks > 0 then
+			table.insert(out, "")
+			emit_tasks(out, proj.tasks)
+		end
+		for _, sec in ipairs(proj.sections) do
+			table.insert(out, "")
+			table.insert(out, "### " .. sec.name .. " <!-- section:" .. sec.id .. " -->")
+			if not state.folded[sec.id] then
+				emit_tasks(out, sec.tasks)
+			end
+		end
 	end
 	return out
 end
@@ -228,20 +229,22 @@ local function render_single_section(sec, proj)
 	local out = {}
 	table.insert(out, "## " .. proj.name .. " <!-- project:" .. proj.id .. " -->")
 	table.insert(out, "### " .. sec.name .. " <!-- section:" .. sec.id .. " -->")
-	blank(out)
-	emit_tasks(out, sec.tasks)
+	if not state.folded[sec.id] then
+		table.insert(out, "")
+		emit_tasks(out, sec.tasks)
+	end
 	return out
 end
 
 local function render_single_task(task, proj)
 	local out = {}
 	table.insert(out, "## " .. proj.name .. " <!-- project:" .. proj.id .. " -->")
-	blank(out)
+	table.insert(out, "")
 	table.insert(out, fmt_task(task))
-	if not state.collapsed and #task.subtasks > 0 then
-		blank(out)
+	if #task.subtasks > 0 then
+		table.insert(out, "")
 		table.insert(out, "#### Subtasks")
-		blank(out)
+		table.insert(out, "")
 		for _, sub in ipairs(task.subtasks) do
 			table.insert(out, fmt_task(sub, "    "))
 		end
@@ -252,7 +255,7 @@ end
 local function render_completed()
 	local out = {}
 	table.insert(out, "## Completed Tasks (last 30 days)")
-	blank(out)
+	table.insert(out, "")
 	for _, task in ipairs(cache.completed) do
 		table.insert(out, "- [x] " .. task.content .. " <!-- id:" .. task.id .. " -->")
 	end
@@ -298,10 +301,10 @@ end
 -- ─── Public navigation API ────────────────────────────────────────────────────
 
 function M.reset()
-	state.view      = V.ALL_PROJECTS
-	state.history   = {}
-	state.ctx       = {}
-	state.collapsed = false
+	state.view    = V.ALL_PROJECTS
+	state.history = {}
+	state.ctx     = {}
+	state.folded  = {}
 end
 
 function M.lines()
@@ -309,10 +312,10 @@ function M.lines()
 end
 
 function M.full_lines()
-	local saved = state.collapsed
-	state.collapsed = false
+	local saved = state.folded
+	state.folded = {}
 	local out = render_all_projects()
-	state.collapsed = saved
+	state.folded = saved
 	return out
 end
 
@@ -322,15 +325,15 @@ end
 
 function M.enter_completed()
 	table.insert(state.history, { view = state.view, ctx = vim.deepcopy(state.ctx) })
-	state.view      = V.COMPLETED
-	state.ctx       = {}
-	state.collapsed = false
+	state.view   = V.COMPLETED
+	state.ctx    = {}
+	state.folded = {}
 	return render_completed()
 end
 
 function M.enter(buf)
 	local item = cursor_item(buf)
-	state.collapsed = false
+	state.folded = {}
 
 	if state.view == V.COMPLETED then
 		return nil
@@ -390,25 +393,34 @@ end
 
 function M.back()
 	if #state.history == 0 then return nil end
-	local prev      = table.remove(state.history)
-	state.view      = prev.view
-	state.ctx       = prev.ctx
-	state.collapsed = false
+	local prev    = table.remove(state.history)
+	state.view    = prev.view
+	state.ctx     = prev.ctx
+	state.folded  = {}
 	return render_current()
 end
 
-function M.toggle_fold()
-	state.collapsed = not state.collapsed
+function M.toggle_fold(buf)
+	local row  = vim.api.nvim_win_get_cursor(0)[1]
+	local line = vim.api.nvim_buf_get_lines(buf, row - 1, row, false)[1] or ""
+	local id = extract_id(line, "project") or extract_id(line, "section")
+	if not id then return nil end
+	state.folded[id] = state.folded[id] and nil or true
 	return render_current()
 end
 
 function M.fold()
-	state.collapsed = true
+	for _, proj in ipairs(cache.projects) do
+		state.folded[proj.id] = true
+		for _, sec in ipairs(proj.sections) do
+			state.folded[sec.id] = true
+		end
+	end
 	return render_current()
 end
 
 function M.unfold()
-	state.collapsed = false
+	state.folded = {}
 	return render_current()
 end
 
