@@ -260,6 +260,7 @@ local function set_lines(buf, lines)
 		vim.bo[buf].readonly = false
 	end
 	vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+	vim.bo[buf].modified = false
 	if not was_modifiable then
 		vim.bo[buf].modifiable = false
 		vim.bo[buf].readonly = true
@@ -539,6 +540,7 @@ local function setup_keymaps(buf)
 	vim.api.nvim_create_autocmd("BufWriteCmd", {
 		buffer = buf,
 		callback = function()
+			vim.bo[buf].modified = false
 			if nav.current_view() ~= nav.VIEW.COMPLETED then
 				M.sync()
 			end
