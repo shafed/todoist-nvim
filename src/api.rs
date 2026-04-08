@@ -228,6 +228,27 @@ pub fn reopen_task(client: &Client, token: &str, task_id: &str) -> Result<(), St
     Ok(())
 }
 
+pub fn create_project(client: &Client, token: &str, name: &str) -> Result<String, String> {
+    let body = json!({ "name": name });
+    let resp = client
+        .post(format!("{}/projects", BASE))
+        .header("Authorization", format!("Bearer {}", token))
+        .json(&body)
+        .send()
+        .map_err(|e| format!("Network error (create project): {}", e))?;
+    let status = resp.status().as_u16();
+    if status < 200 || status >= 300 {
+        return Err(http_err(status, "projects [POST]"));
+    }
+    let created: serde_json::Value = resp
+        .json()
+        .map_err(|e| format!("Parse error (create project): {}", e))?;
+    created["id"]
+        .as_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| "Create project: missing 'id' in response".to_string())
+}
+
 pub fn delete_task(client: &Client, token: &str, task_id: &str) -> Result<(), String> {
     let resp = client
         .delete(format!("{}/tasks/{}", BASE, task_id))

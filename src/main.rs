@@ -34,6 +34,16 @@ fn dispatch() -> Result<(), String> {
                 .ok_or("Usage: todoist-nvim reopen <task-id>")?;
             sync::run_reopen(id)
         }
+        Some("create-project") => {
+            let name = args.get(2)
+                .ok_or("Usage: todoist-nvim create-project <name>")?;
+            let token = std::env::var("TODOIST_API_TOKEN")
+                .map_err(|_| "TODOIST_API_TOKEN not set")?;
+            let client = api::make_client()?;
+            let id = api::create_project(&client, &token, name)?;
+            println!("{}", id);
+            Ok(())
+        }
         _ => fetch::run(),
     }
 }

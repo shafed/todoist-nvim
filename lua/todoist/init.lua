@@ -516,6 +516,9 @@ local function setup_keymaps(buf)
 	vim.keymap.set("n", "<M-x>", function()
 		toggle_complete(buf)
 	end, vim.tbl_extend("force", o, { desc = "Toggle complete / mark for restore" }))
+	vim.keymap.set("n", "<localleader>p", function()
+		M.create_project()
+	end, vim.tbl_extend("force", o, { desc = "Create new project" }))
 	vim.keymap.set("n", "<CR>", function()
 		local line = vim.fn.line(".")
 		local foldlevel = vim.fn.foldlevel(line)
@@ -754,6 +757,51 @@ function M.sync()
 	})
 end
 
+-- ─── create_project() ────────────────────────────────────────────────────────
+function M.create_project()
+	local binary = find_binary()
+	if not binary then
+		vim.notify("todoist-nvim: binary not found.", vim.log.levels.ERROR, { title = "todoist-nvim" })
+		return
+	end
+	vim.ui.input({ prompt = "New project name: " }, function(name)
+		if not name or name:match("^%s*$") then
+			return
+		end
+		vim.notify("Creating project…", vim.log.levels.INFO, { title = "todoist-nvim" })
+		local out, err = {}, {}
+		vim.fn.jobstart({ binary, "create-project", name }, {
+			stdout_buffered = true,
+			stderr_buffered = true,
+			on_stdout = function(_, d)
+				out = d
+			end,
+			on_stderr = function(_, d)
+				err = d
+			end,
+			on_exit = function(_, code)
+				if code ~= 0 then
+					local msg = table.concat(err, "\n"):gsub("%s+$", "")
+					vim.schedule(function()
+						vim.notify(
+							msg ~= "" and msg or "Failed to create project.",
+							vim.log.levels.ERROR,
+							{ title = "todoist-nvim" }
+						)
+					end)
+					return
+				end
+				vim.schedule(function()
+					vim.notify("Project created!", vim.log.levels.INFO, { title = "todoist-nvim" })
+					vim.defer_fn(function()
+						M.open()
+					end, 500)
+				end)
+			end,
+		})
+	end)
+end
+
 -- ─── setup() ─────────────────────────────────────────────────────────────────
 --- Config:
 ---   checkbox = {
@@ -793,6 +841,9 @@ function M.setup(opts)
 	vim.api.nvim_create_user_command("TodoistSync", function()
 		M.sync()
 	end, { desc = "Sync Todoist buffer → Todoist", nargs = 0 })
+	vim.api.nvim_create_user_command("TodoistCreateProject", function()
+		M.create_project()
+	end, { desc = "Create a new Todoist project", nargs = 0 })
 	vim.api.nvim_create_user_command("TodoistRestore", function()
 		local buf = find_buf(ACTIVE_BUF_NAME)
 		if not buf then
