@@ -536,6 +536,14 @@ local function setup_keymaps(buf)
 			apply_extmark_conceal(buf, row)
 		end,
 	})
+	vim.api.nvim_create_autocmd("BufWriteCmd", {
+		buffer = buf,
+		callback = function()
+			if nav.current_view() ~= nav.VIEW.COMPLETED then
+				M.sync()
+			end
+		end,
+	})
 end
 
 -- ─── open() ──────────────────────────────────────────────────────────────────────
