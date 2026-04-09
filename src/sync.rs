@@ -48,7 +48,13 @@ pub fn run(buffer_file: &str) -> Result<(), String> {
         }
     };
 
-    let ops = compute_ops(&buffer_tasks, &snapshot_tasks, &mut summary);
+    let mut ops = compute_ops(&buffer_tasks, &snapshot_tasks, &mut summary);
+
+    // Detect reorder: compare buffer position order vs snapshot child_order.
+    let reorder_op = compute_reorder(&buffer_tasks, &snapshot_tasks);
+    if let Some(op) = reorder_op {
+        ops.push((usize::MAX, op));
+    }
 
     if ops.is_empty() && summary.warnings.is_empty() {
         println!("No changes detected.");
@@ -156,6 +162,74 @@ fn compute_ops(
     ops
 }
 
+// ─── Reorder detection ──────────────────────────────────────────────────────
+
+/// Compare buffer ordering against snapshot child_order for each sibling group.
+/// A sibling group is tasks sharing the same (project_id, section_id, parent_id).
+/// If buffer order differs from snapshot order, emit a single Reorder op.
+fn compute_reorder(
+    buffer_tasks: &[BufferTask],
+    snapshot: &HashMap<String, SnapshotTask>,
+) -> Option<SyncOp> {
+    // Group existing (has ID) buffer tasks by sibling key, preserving buffer order.
+    let mut sibling_groups: HashMap<(Option<String>, Option<String>, Option<String>), Vec<&BufferTask>> =
+        HashMap::new();
+
+    for task in buffer_tasks {
+        if let Some(ref id) = task.id {
+            if snapshot.contains_key(id.as_str()) {
+                let key = (
+                    task.project_id.clone(),
+                    task.section_id.clone(),
+                    task.parent_id.clone(),
+                );
+                sibling_groups.entry(key).or_default().push(task);
+            }
+        }
+    }
+
+    let mut reorder_items: Vec<(String, i64)> = Vec::new();
+
+    for (_key, tasks) in &sibling_groups {
+        if tasks.len() < 2 {
+            continue;
+        }
+
+        // Get the snapshot ordering for these tasks.
+        let mut snap_ordered: Vec<(&str, i64)> = tasks
+            .iter()
+            .filter_map(|t| {
+                let id = t.id.as_ref()?;
+                let snap = snapshot.get(id.as_str())?;
+                Some((id.as_str(), snap.child_order))
+            })
+            .collect();
+        snap_ordered.sort_by_key(|&(_, order)| order);
+        let snap_id_order: Vec<&str> = snap_ordered.iter().map(|&(id, _)| id).collect();
+
+        // Buffer order (already in buffer sequence).
+        let buf_id_order: Vec<&str> = tasks
+            .iter()
+            .filter_map(|t| t.id.as_deref())
+            .collect();
+
+        if snap_id_order != buf_id_order {
+            // Assign new child_order values based on buffer position.
+            for (i, task) in tasks.iter().enumerate() {
+                if let Some(ref id) = task.id {
+                    reorder_items.push((id.clone(), i as i64 + 1));
+                }
+            }
+        }
+    }
+
+    if reorder_items.is_empty() {
+        None
+    } else {
+        Some(SyncOp::Reorder { items: reorder_items })
+    }
+}
+
 // ─── Execution ───────────────────────────────────────────────────────────────
 
 fn execute_ops(
@@ -198,6 +272,12 @@ fn execute_ops(
                 match api::delete_task(client, token, &id) {
                     Ok(())  => summary.deleted += 1,
                     Err(e)  => summary.errors.push(format!("Delete '{}': {}", content, e)),
+                }
+            }
+            SyncOp::Reorder { items } => {
+                match api::reorder_tasks(client, token, &items) {
+                    Ok(())  => summary.reordered += items.len(),
+                    Err(e)  => summary.errors.push(format!("Reorder: {}", e)),
                 }
             }
         }
@@ -246,7 +326,7 @@ mod tests {
         (id.to_string(), SnapshotTask {
             id: id.to_string(), content: content.to_string(),
             project_id: "p1".to_string(), section_id: None,
-            parent_id: None, checked,
+            parent_id: None, checked, child_order: 0,
         })
     }
     fn snap_map(v: Vec<(&str, &str, bool)>) -> HashMap<String, SnapshotTask> {
@@ -311,5 +391,50 @@ mod tests {
             &mut SyncSummary::default(),
         );
         assert!(ops.is_empty());
+    }
+
+    fn snap_ordered(id: &str, content: &str, child_order: i64) -> (String, SnapshotTask) {
+        (id.to_string(), SnapshotTask {
+            id: id.to_string(), content: content.to_string(),
+            project_id: "p1".to_string(), section_id: None,
+            parent_id: None, checked: false, child_order,
+        })
+    }
+
+    #[test]
+    fn detects_reorder() {
+        // Snapshot order: t1(order=1), t2(order=2)
+        // Buffer order: t2, t1 — swapped
+        let snap: HashMap<String, SnapshotTask> = vec![
+            snap_ordered("t1", "Task 1", 1),
+            snap_ordered("t2", "Task 2", 2),
+        ].into_iter().collect();
+
+        let buf = vec![
+            bt(Some("t2"), "Task 2", false),
+            bt(Some("t1"), "Task 1", false),
+        ];
+
+        let result = compute_reorder(&buf, &snap);
+        assert!(result.is_some());
+        if let Some(SyncOp::Reorder { items }) = result {
+            assert_eq!(items.len(), 2);
+        }
+    }
+
+    #[test]
+    fn no_reorder_when_same_order() {
+        let snap: HashMap<String, SnapshotTask> = vec![
+            snap_ordered("t1", "Task 1", 1),
+            snap_ordered("t2", "Task 2", 2),
+        ].into_iter().collect();
+
+        let buf = vec![
+            bt(Some("t1"), "Task 1", false),
+            bt(Some("t2"), "Task 2", false),
+        ];
+
+        let result = compute_reorder(&buf, &snap);
+        assert!(result.is_none());
     }
 }

@@ -55,6 +55,7 @@ pub fn run() -> Result<(), String> {
                     section_id: t.section_id.clone(),
                     parent_id: t.parent_id.clone(),
                     checked: false,
+                    child_order: t.child_order,
                 },
             )
         })

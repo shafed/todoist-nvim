@@ -249,6 +249,55 @@ pub fn create_project(client: &Client, token: &str, name: &str) -> Result<String
         .ok_or_else(|| "Create project: missing 'id' in response".to_string())
 }
 
+/// Reorder tasks via the Sync API v9 (item_reorder command).
+/// Each tuple is (task_id, new_child_order).
+pub fn reorder_tasks(
+    client: &Client,
+    token: &str,
+    items: &[(String, i64)],
+) -> Result<(), String> {
+    if items.is_empty() {
+        return Ok(());
+    }
+    let items_json: Vec<serde_json::Value> = items
+        .iter()
+        .map(|(id, order)| json!({"id": id, "child_order": order}))
+        .collect();
+    let commands = json!([{
+        "type": "item_reorder",
+        "uuid": uuid_v4(),
+        "args": { "items": items_json }
+    }]);
+    let resp = client
+        .post("https://api.todoist.com/sync/v9/sync")
+        .header("Authorization", format!("Bearer {}", token))
+        .form(&[("commands", commands.to_string())])
+        .send()
+        .map_err(|e| format!("Network error (reorder): {}", e))?;
+    let status = resp.status().as_u16();
+    if status < 200 || status >= 300 {
+        return Err(http_err(status, "sync/v9 item_reorder"));
+    }
+    Ok(())
+}
+
+/// Simple UUID v4 generator (random hex, no external crate needed).
+fn uuid_v4() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let seed = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    format!(
+        "{:08x}-{:04x}-4{:03x}-{:04x}-{:012x}",
+        (seed & 0xFFFF_FFFF) as u32,
+        ((seed >> 32) & 0xFFFF) as u16,
+        ((seed >> 48) & 0x0FFF) as u16,
+        (((seed >> 60) & 0x3F) | 0x80) as u16,
+        ((seed >> 66) & 0xFFFF_FFFF_FFFF) as u64,
+    )
+}
+
 pub fn delete_task(client: &Client, token: &str, task_id: &str) -> Result<(), String> {
     let resp = client
         .delete(format!("{}/tasks/{}", BASE, task_id))

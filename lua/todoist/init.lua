@@ -543,7 +543,11 @@ local function setup_comment_guards(buf)
 		local row = vim.api.nvim_win_get_cursor(0)[1]
 		local line = vim.api.nvim_buf_get_lines(buf, row - 1, row, false)[1] or ""
 		if line:match("<!%-%- id:") then
-			vim.notify("Use x to complete tasks, don't delete the line.", vim.log.levels.WARN, { title = "todoist-nvim" })
+			vim.notify(
+				"Use x to complete tasks, don't delete the line.",
+				vim.log.levels.WARN,
+				{ title = "todoist-nvim" }
+			)
 		else
 			vim.cmd("normal! dd")
 		end

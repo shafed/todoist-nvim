@@ -81,6 +81,9 @@ pub struct SnapshotTask {
     /// Used to detect [x] → [ ] transitions (reopen).
     #[serde(default)]
     pub checked: bool,
+    /// Position among siblings at last-fetch time.
+    #[serde(default)]
+    pub child_order: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -142,6 +145,9 @@ pub enum SyncOp {
         id: String,
         content: String,
     },
+    Reorder {
+        items: Vec<(String, i64)>, // (task_id, new_child_order)
+    },
 }
 
 #[derive(Debug, Default)]
@@ -151,6 +157,7 @@ pub struct SyncSummary {
     pub completed: usize,
     pub reopened: usize,
     pub deleted: usize,
+    pub reordered: usize,
     pub skipped: usize,
     pub warnings: Vec<String>,
     pub errors: Vec<String>,
@@ -168,12 +175,13 @@ impl SyncSummary {
         if self.completed > 0 { println!("  Completed: {}", self.completed); }
         if self.reopened  > 0 { println!("  Reopened:  {}", self.reopened); }
         if self.deleted   > 0 { println!("  Deleted:   {}", self.deleted); }
+        if self.reordered > 0 { println!("  Reordered: {}", self.reordered); }
         if self.skipped   > 0 { println!("  Skipped:   {}", self.skipped); }
         for w in &self.warnings { println!("  WARNING: {}", w); }
         for e in &self.errors   { println!("  ERROR: {}", e); }
     }
 
     pub fn has_changes(&self) -> bool {
-        self.created + self.updated + self.completed + self.reopened + self.deleted > 0
+        self.created + self.updated + self.completed + self.reopened + self.deleted + self.reordered > 0
     }
 }
