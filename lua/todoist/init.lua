@@ -143,7 +143,7 @@ local function apply_extmark_conceal(buf, cursor_line)
 		local is_cursor = (cursor_line ~= nil and lnum == cursor_line)
 
 		local ms, me = line:find("%s*<!%-%-.*%-%->%s*")
-		if ms and me and not is_cursor then
+		if ms and me then
 			vim.api.nvim_buf_set_extmark(buf, NS, lnum0, ms - 1, {
 				end_col = me,
 				conceal = "",
@@ -441,6 +441,115 @@ local function fold_markdown_headings(levels)
 	vim.fn.winrestview(saved_view)
 end
 
+-- ─── Comment-guard helpers ────────────────────────────────────────────────────
+-- Returns the 0-based byte col where the trailing <!-- ... --> starts (including
+-- leading whitespace before it), or nil when the line has no comment.
+local function comment_start_col(line)
+	local ms = line:find("%s*<!%-%-.*%-%->%s*$")
+	return ms and (ms - 1) or nil
+end
+
+-- Remap keys that would land in or past the hidden comment.
+local function setup_comment_guards(buf)
+	local o = { buffer = buf, noremap = true, silent = true }
+
+	-- A → insert at end of *visible* content (before comment)
+	vim.keymap.set("n", "A", function()
+		local row = vim.api.nvim_win_get_cursor(0)[1]
+		local line = vim.api.nvim_buf_get_lines(buf, row - 1, row, false)[1] or ""
+		local col = comment_start_col(line)
+		if col then
+			vim.api.nvim_win_set_cursor(0, { row, col })
+			vim.cmd("startinsert")
+		else
+			vim.cmd("normal! A")
+		end
+	end, o)
+
+	-- $ → jump to end of visible content
+	vim.keymap.set("n", "$", function()
+		local row = vim.api.nvim_win_get_cursor(0)[1]
+		local line = vim.api.nvim_buf_get_lines(buf, row - 1, row, false)[1] or ""
+		local col = comment_start_col(line)
+		if col and col > 0 then
+			vim.api.nvim_win_set_cursor(0, { row, col - 1 })
+		else
+			vim.cmd("normal! $")
+		end
+	end, o)
+
+	-- C → change to end of visible content
+	vim.keymap.set("n", "C", function()
+		local row = vim.api.nvim_win_get_cursor(0)[1]
+		local line = vim.api.nvim_buf_get_lines(buf, row - 1, row, false)[1] or ""
+		local col = comment_start_col(line)
+		if col then
+			local cursor_col = vim.api.nvim_win_get_cursor(0)[2]
+			if cursor_col < col then
+				local before = line:sub(1, cursor_col)
+				local after = line:sub(col + 1)
+				vim.api.nvim_buf_set_lines(buf, row - 1, row, false, { before .. after })
+				vim.api.nvim_win_set_cursor(0, { row, cursor_col })
+				vim.cmd("startinsert")
+			end
+		else
+			vim.cmd("normal! C")
+		end
+	end, o)
+
+	-- D → delete to end of visible content
+	vim.keymap.set("n", "D", function()
+		local row = vim.api.nvim_win_get_cursor(0)[1]
+		local line = vim.api.nvim_buf_get_lines(buf, row - 1, row, false)[1] or ""
+		local col = comment_start_col(line)
+		if col then
+			local cursor_col = vim.api.nvim_win_get_cursor(0)[2]
+			if cursor_col < col then
+				local before = line:sub(1, cursor_col)
+				local after = line:sub(col + 1)
+				vim.api.nvim_buf_set_lines(buf, row - 1, row, false, { before .. after })
+			end
+		else
+			vim.cmd("normal! D")
+		end
+	end, o)
+
+	-- S / cc → change entire visible content, keep comment + checkbox
+	for _, key in ipairs({ "S", "cc" }) do
+		vim.keymap.set("n", key, function()
+			local row = vim.api.nvim_win_get_cursor(0)[1]
+			local line = vim.api.nvim_buf_get_lines(buf, row - 1, row, false)[1] or ""
+			local col = comment_start_col(line)
+			-- Find end of checkbox prefix: "- [ ] " or "    - [x] " etc.
+			local prefix_end = line:find("%- %[.%] ")
+			if prefix_end and col then
+				prefix_end = line:find(" ", prefix_end + 4) -- skip "- [x]" then the space
+				if prefix_end then
+					local prefix = line:sub(1, prefix_end)
+					local comment = line:sub(col + 1)
+					vim.api.nvim_buf_set_lines(buf, row - 1, row, false, { prefix .. comment })
+					vim.api.nvim_win_set_cursor(0, { row, #prefix })
+					vim.cmd("startinsert")
+				end
+			else
+				vim.cmd("normal! " .. key)
+			end
+		end, o)
+	end
+
+	-- dd → prevent deleting task lines entirely (would cause Delete sync op)
+	-- Allow deleting non-task lines normally.
+	vim.keymap.set("n", "dd", function()
+		local row = vim.api.nvim_win_get_cursor(0)[1]
+		local line = vim.api.nvim_buf_get_lines(buf, row - 1, row, false)[1] or ""
+		if line:match("<!%-%- id:") then
+			vim.notify("Use x to complete tasks, don't delete the line.", vim.log.levels.WARN, { title = "todoist-nvim" })
+		else
+			vim.cmd("normal! dd")
+		end
+	end, o)
+end
+
 -- ─── Buffer keymaps ───────────────────────────────────────────────────────────
 local function setup_keymaps(buf)
 	local o = { buffer = buf, noremap = true, silent = true }
@@ -559,6 +668,7 @@ function M._fill_active_buffer(lines)
 	end
 	if not keymaps_set[buf] then
 		setup_keymaps(buf)
+		setup_comment_guards(buf)
 		setup_cursor_conceal(buf)
 		keymaps_set[buf] = true
 	end
