@@ -244,6 +244,16 @@ local function create_buf(name)
 	vim.bo[buf].bufhidden = "wipe"
 	vim.bo[buf].swapfile = false
 	vim.bo[buf].filetype = "todoist"
+	-- Wipe the Todoist buffer before session save so session plugins
+	-- restore the previous real file instead.
+	vim.api.nvim_create_autocmd("VimLeavePre", {
+		buffer = buf,
+		callback = function()
+			if vim.api.nvim_buf_is_valid(buf) then
+				pcall(vim.api.nvim_buf_delete, buf, { force = true })
+			end
+		end,
+	})
 	return buf
 end
 
