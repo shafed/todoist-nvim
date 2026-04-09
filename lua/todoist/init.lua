@@ -118,16 +118,14 @@ local function find_binary()
 end
 
 -- ─── Buffer registry ─────────────────────────────────────────────────────────────────
-local ACTIVE_BUF_NAME = "Todoist Tasks"
+local ACTIVE_BUF_NAME = "todoist://tasks"
 -- Track whether keymaps have been set up for a given buffer
 local keymaps_set = {}
 
 local function find_buf(name)
 	for _, buf in ipairs(vim.api.nvim_list_bufs()) do
-		if vim.api.nvim_buf_is_valid(buf) then
-			if vim.fn.fnamemodify(vim.api.nvim_buf_get_name(buf), ":t") == name then
-				return buf
-			end
+		if vim.api.nvim_buf_is_valid(buf) and vim.api.nvim_buf_get_name(buf) == name then
+			return buf
 		end
 	end
 	return nil
@@ -656,8 +654,13 @@ local function setup_keymaps(buf)
 		buffer = buf,
 		callback = function()
 			vim.bo[buf].modified = false
-			if nav.current_view() ~= nav.VIEW.COMPLETED then
-				M.sync()
+			local ok, err = pcall(function()
+				if nav.current_view() ~= nav.VIEW.COMPLETED then
+					M.sync()
+				end
+			end)
+			if not ok then
+				vim.notify("Sync error: " .. tostring(err), vim.log.levels.ERROR, { title = "todoist-nvim" })
 			end
 		end,
 	})
