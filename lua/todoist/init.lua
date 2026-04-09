@@ -22,6 +22,8 @@
 local nav = require("todoist.nav")
 
 local M = {}
+local sync_in_progress = false
+local create_project_in_progress = false
 
 -- ─── Namespace ─────────────────────────────────────────────────────────────────────────
 local NS = vim.api.nvim_create_namespace("todoist_meta")
@@ -711,6 +713,10 @@ end
 
 -- ─── sync() ───────────────────────────────────────────────────────────────────────
 function M.sync()
+	if sync_in_progress then
+		vim.notify("Sync already in progress…", vim.log.levels.WARN, { title = "todoist-nvim" })
+		return
+	end
 	local binary = find_binary()
 	if not binary then
 		vim.notify("todoist-nvim: binary not found.", vim.log.levels.ERROR, { title = "todoist-nvim" })
@@ -737,6 +743,7 @@ function M.sync()
 	local tmpfile = vim.fn.tempname()
 	vim.fn.writefile(lines, tmpfile)
 	vim.notify("Syncing…", vim.log.levels.INFO, { title = "todoist-nvim" })
+	sync_in_progress = true
 	local out, err = {}, {}
 	vim.fn.jobstart({ binary, "sync", tmpfile }, {
 		stdout_buffered = true,
@@ -748,6 +755,7 @@ function M.sync()
 			err = d
 		end,
 		on_exit = function(_, code)
+			sync_in_progress = false
 			vim.fn.delete(tmpfile)
 			if code ~= 0 then
 				local msg = table.concat(err, "\n"):gsub("%s+$", "")
@@ -769,6 +777,10 @@ end
 
 -- ─── create_project() ────────────────────────────────────────────────────────
 function M.create_project()
+	if create_project_in_progress then
+		vim.notify("Project creation already in progress…", vim.log.levels.WARN, { title = "todoist-nvim" })
+		return
+	end
 	local binary = find_binary()
 	if not binary then
 		vim.notify("todoist-nvim: binary not found.", vim.log.levels.ERROR, { title = "todoist-nvim" })
@@ -779,6 +791,7 @@ function M.create_project()
 			return
 		end
 		vim.notify("Creating project…", vim.log.levels.INFO, { title = "todoist-nvim" })
+		create_project_in_progress = true
 		local out, err = {}, {}
 		vim.fn.jobstart({ binary, "create-project", name }, {
 			stdout_buffered = true,
@@ -790,6 +803,7 @@ function M.create_project()
 				err = d
 			end,
 			on_exit = function(_, code)
+				create_project_in_progress = false
 				if code ~= 0 then
 					local msg = table.concat(err, "\n"):gsub("%s+$", "")
 					vim.schedule(function()
