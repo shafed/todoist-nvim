@@ -238,10 +238,10 @@ end
 
 -- ─── Buffer creation ────────────────────────────────────────────────────────────────
 local function create_buf(name)
-	local buf = vim.api.nvim_create_buf(true, true)
+	local buf = vim.api.nvim_create_buf(false, true)
 	vim.api.nvim_buf_set_name(buf, name)
 	vim.bo[buf].buftype = "acwrite"
-	vim.bo[buf].bufhidden = "hide"
+	vim.bo[buf].bufhidden = "wipe"
 	vim.bo[buf].swapfile = false
 	vim.bo[buf].filetype = "todoist"
 	return buf
