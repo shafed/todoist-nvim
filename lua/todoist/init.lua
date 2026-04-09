@@ -143,7 +143,7 @@ local function apply_extmark_conceal(buf, cursor_line)
 		local is_cursor = (cursor_line ~= nil and lnum == cursor_line)
 
 		local ms, me = line:find("%s*<!%-%-.*%-%->%s*")
-		if ms and me then
+		if ms and me and not is_cursor then
 			vim.api.nvim_buf_set_extmark(buf, NS, lnum0, ms - 1, {
 				end_col = me,
 				conceal = "",
