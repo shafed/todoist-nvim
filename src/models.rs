@@ -34,6 +34,13 @@ pub struct Section {
 }
 
 #[derive(Debug, Deserialize, Clone)]
+pub struct TaskDue {
+    pub date: String,             // "YYYY-MM-DD" or "YYYY-MM-DDTHH:MM:SS"
+    #[serde(default)]
+    pub datetime: Option<String>, // present when task has a specific time
+}
+
+#[derive(Debug, Deserialize, Clone)]
 pub struct Task {
     pub id: String,
     pub content: String,
@@ -45,6 +52,8 @@ pub struct Task {
     pub parent_id: Option<String>,
     #[serde(alias = "childOrder", default)]
     pub child_order: i64,
+    #[serde(alias = "due", default)]
+    pub due: Option<TaskDue>,
 }
 
 impl Task {
@@ -84,6 +93,9 @@ pub struct SnapshotTask {
     /// Position among siblings at last-fetch time.
     #[serde(default)]
     pub child_order: i64,
+    /// Normalized due date in buffer form: "YYYY-MM-DD" or "YYYY-MM-DD HH:MM".
+    #[serde(default)]
+    pub due: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -116,6 +128,8 @@ pub struct BufferTask {
     pub section_id: Option<String>,
     pub parent_id: Option<String>,
     pub line_num: usize,
+    /// Normalized due date parsed from buffer: "YYYY-MM-DD" or "YYYY-MM-DD HH:MM".
+    pub due: Option<String>,
 }
 
 // ─── Sync operations ─────────────────────────────────────────────────────────
@@ -127,11 +141,14 @@ pub enum SyncOp {
         project_id: String,
         section_id: Option<String>,
         parent_id: Option<String>,
+        due: Option<String>,
     },
     Update {
         id: String,
         old_content: String,
         new_content: String,
+        old_due: Option<String>,
+        new_due: Option<String>,
     },
     Complete {
         id: String,

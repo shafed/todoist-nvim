@@ -147,6 +147,30 @@ fn is_leap(y: u64) -> bool {
 
 // ─── Mutations ────────────────────────────────────────────────────────────────
 
+/// Apply due-date fields to a mutable JSON body according to the Todoist API rules:
+/// - `None`                    → `"due_string": ""` (clears the due date)
+/// - `Some("YYYY-MM-DD")`      → `"due_date": "YYYY-MM-DD"`
+/// - `Some("YYYY-MM-DD HH:MM")`→ `"due_datetime": "YYYY-MM-DDTHH:MM:00"`
+fn apply_due(body: &mut serde_json::Value, due: Option<&str>) {
+    match due {
+        None => {
+            body["due_string"] = json!("");
+        }
+        Some(s) if s.len() == 10 => {
+            body["due_date"] = json!(s);
+        }
+        Some(s) if s.len() == 16 => {
+            // "YYYY-MM-DD HH:MM" → "YYYY-MM-DDTHH:MM:00"
+            let iso = format!("{}T{}:00", &s[..10], &s[11..16]);
+            body["due_datetime"] = json!(iso);
+        }
+        Some(s) => {
+            // Unexpected format — fall back to due_string and let Todoist parse it
+            body["due_string"] = json!(s);
+        }
+    }
+}
+
 pub fn create_task(
     client: &Client,
     token: &str,
@@ -154,6 +178,7 @@ pub fn create_task(
     project_id: &str,
     section_id: Option<&str>,
     parent_id: Option<&str>,
+    due: Option<&str>,
 ) -> Result<String, String> {
     let mut body = json!({ "content": content, "project_id": project_id });
     if let Some(sid) = section_id {
@@ -161,6 +186,9 @@ pub fn create_task(
     }
     if let Some(pid) = parent_id {
         body["parent_id"] = json!(pid);
+    }
+    if due.is_some() {
+        apply_due(&mut body, due);
     }
 
     let resp = client
@@ -188,11 +216,14 @@ pub fn update_task(
     token: &str,
     task_id: &str,
     content: &str,
+    due: Option<&str>,
 ) -> Result<(), String> {
+    let mut body = json!({ "content": content });
+    apply_due(&mut body, due);
     let resp = client
         .post(format!("{}/tasks/{}", BASE, task_id))
         .header("Authorization", format!("Bearer {}", token))
-        .json(&json!({ "content": content }))
+        .json(&body)
         .send()
         .map_err(|e| format!("Network error (update {}): {}", task_id, e))?;
     let status = resp.status().as_u16();

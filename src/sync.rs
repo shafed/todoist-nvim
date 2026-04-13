@@ -112,6 +112,7 @@ fn compute_ops(
                     project_id,
                     section_id: task.section_id.clone(),
                     parent_id: task.parent_id.clone(),
+                    due: task.due.clone(),
                 }));
             }
 
@@ -136,11 +137,13 @@ fn compute_ops(
                     (false, true)  => ops.push((idx, SyncOp::Complete { id: id.clone(), content: task.content.clone() })),
                     (true,  false) => ops.push((idx, SyncOp::Reopen   { id: id.clone(), content: task.content.clone() })),
                     _ => {
-                        if task.content != snap.content {
+                        if task.content != snap.content || task.due != snap.due {
                             ops.push((idx, SyncOp::Update {
                                 id: id.clone(),
                                 old_content: snap.content.clone(),
                                 new_content: task.content.clone(),
+                                old_due: snap.due.clone(),
+                                new_due: task.due.clone(),
                             }));
                         }
                     }
@@ -242,16 +245,17 @@ fn execute_ops(
 ) {
     for (buf_idx, op) in ops {
         match op {
-            SyncOp::Create { content, project_id, section_id, parent_id } => {
+            SyncOp::Create { content, project_id, section_id, parent_id, due } => {
                 let resolved = resolve_parent_id(&parent_id, buf_idx, buffer_tasks, new_id_map);
                 match api::create_task(client, token, &content, &project_id,
-                                       section_id.as_deref(), resolved.as_deref()) {
+                                       section_id.as_deref(), resolved.as_deref(),
+                                       due.as_deref()) {
                     Ok(new_id) => { new_id_map.insert(buf_idx, new_id); summary.created += 1; }
                     Err(e)     => summary.errors.push(format!("Create '{}': {}", content, e)),
                 }
             }
-            SyncOp::Update { id, old_content, new_content } => {
-                match api::update_task(client, token, &id, &new_content) {
+            SyncOp::Update { id, old_content, new_content, old_due: _, new_due } => {
+                match api::update_task(client, token, &id, &new_content, new_due.as_deref()) {
                     Ok(())  => summary.updated += 1,
                     Err(e)  => summary.errors.push(format!("Update '{}' → '{}': {}", old_content, new_content, e)),
                 }
@@ -319,14 +323,14 @@ mod tests {
             id: id.map(|s| s.to_string()), content: content.to_string(),
             checked, indent_level: 0,
             project_id: Some("p1".to_string()), section_id: None,
-            parent_id: None, line_num: 1,
+            parent_id: None, line_num: 1, due: None,
         }
     }
     fn snap(id: &str, content: &str, checked: bool) -> (String, SnapshotTask) {
         (id.to_string(), SnapshotTask {
             id: id.to_string(), content: content.to_string(),
             project_id: "p1".to_string(), section_id: None,
-            parent_id: None, checked, child_order: 0,
+            parent_id: None, checked, child_order: 0, due: None,
         })
     }
     fn snap_map(v: Vec<(&str, &str, bool)>) -> HashMap<String, SnapshotTask> {
@@ -397,7 +401,7 @@ mod tests {
         (id.to_string(), SnapshotTask {
             id: id.to_string(), content: content.to_string(),
             project_id: "p1".to_string(), section_id: None,
-            parent_id: None, checked: false, child_order,
+            parent_id: None, checked: false, child_order, due: None,
         })
     }
 
@@ -420,6 +424,66 @@ mod tests {
         if let Some(SyncOp::Reorder { items }) = result {
             assert_eq!(items.len(), 2);
         }
+    }
+
+    fn bt_with_due(id: Option<&str>, content: &str, due: Option<&str>) -> BufferTask {
+        BufferTask {
+            id: id.map(|s| s.to_string()), content: content.to_string(),
+            checked: false, indent_level: 0,
+            project_id: Some("p1".to_string()), section_id: None,
+            parent_id: None, line_num: 1,
+            due: due.map(|s| s.to_string()),
+        }
+    }
+    fn snap_with_due(id: &str, content: &str, due: Option<&str>) -> (String, SnapshotTask) {
+        (id.to_string(), SnapshotTask {
+            id: id.to_string(), content: content.to_string(),
+            project_id: "p1".to_string(), section_id: None,
+            parent_id: None, checked: false, child_order: 0,
+            due: due.map(|s| s.to_string()),
+        })
+    }
+
+    #[test]
+    fn detects_date_added() {
+        // Snapshot has no date; buffer now has one → should emit Update
+        let snap: HashMap<String, SnapshotTask> =
+            vec![snap_with_due("t1", "Task", None)].into_iter().collect();
+        let buf = vec![bt_with_due(Some("t1"), "Task", Some("2026-04-20"))];
+        let ops = compute_ops(&buf, &snap, &mut SyncSummary::default());
+        assert_eq!(ops.len(), 1);
+        assert!(matches!(&ops[0].1, SyncOp::Update { new_due, .. } if new_due.as_deref() == Some("2026-04-20")));
+    }
+
+    #[test]
+    fn detects_date_changed() {
+        let snap: HashMap<String, SnapshotTask> =
+            vec![snap_with_due("t1", "Task", Some("2026-04-20"))].into_iter().collect();
+        let buf = vec![bt_with_due(Some("t1"), "Task", Some("2026-05-01"))];
+        let ops = compute_ops(&buf, &snap, &mut SyncSummary::default());
+        assert_eq!(ops.len(), 1);
+        assert!(matches!(&ops[0].1, SyncOp::Update { new_due, old_due, .. }
+            if new_due.as_deref() == Some("2026-05-01") && old_due.as_deref() == Some("2026-04-20")));
+    }
+
+    #[test]
+    fn detects_date_removed() {
+        // Snapshot has date; buffer has cleared it → Update with new_due=None
+        let snap: HashMap<String, SnapshotTask> =
+            vec![snap_with_due("t1", "Task", Some("2026-04-20"))].into_iter().collect();
+        let buf = vec![bt_with_due(Some("t1"), "Task", None)];
+        let ops = compute_ops(&buf, &snap, &mut SyncSummary::default());
+        assert_eq!(ops.len(), 1);
+        assert!(matches!(&ops[0].1, SyncOp::Update { new_due, .. } if new_due.is_none()));
+    }
+
+    #[test]
+    fn no_op_when_date_unchanged() {
+        let snap: HashMap<String, SnapshotTask> =
+            vec![snap_with_due("t1", "Task", Some("2026-04-20"))].into_iter().collect();
+        let buf = vec![bt_with_due(Some("t1"), "Task", Some("2026-04-20"))];
+        let ops = compute_ops(&buf, &snap, &mut SyncSummary::default());
+        assert!(ops.is_empty());
     }
 
     #[test]

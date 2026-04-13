@@ -56,6 +56,7 @@ pub fn run() -> Result<(), String> {
                     parent_id: t.parent_id.clone(),
                     checked: false,
                     child_order: t.child_order,
+                    due: normalize_due(&t.due),
                 },
             )
         })
@@ -196,6 +197,35 @@ fn render(
     Ok(out)
 }
 
+/// Format a `TaskDue` into a buffer string: `" 📅 YYYY-MM-DD"` or
+/// `" 📅 YYYY-MM-DD HH:MM"`, or `""` if there is no due date.
+fn format_due(due: &Option<crate::models::TaskDue>) -> String {
+    let Some(d) = due else { return String::new() };
+    // Prefer datetime (has time component), truncate to HH:MM.
+    if let Some(ref dt) = d.datetime {
+        // dt is RFC3339-ish: "YYYY-MM-DDTHH:MM:SS[Z/offset]"
+        if dt.len() >= 16 {
+            let date_part = &dt[..10];
+            let time_part = &dt[11..16];
+            return format!(" \u{1F4C5} {} {}", date_part, time_part);
+        }
+    }
+    // Fall back to date-only
+    format!(" \u{1F4C5} {}", &d.date[..d.date.len().min(10)])
+}
+
+/// Normalize a `TaskDue` to the buffer form used in snapshots and diffs:
+/// `"YYYY-MM-DD"` or `"YYYY-MM-DD HH:MM"`, or `None` if no due date.
+fn normalize_due(due: &Option<crate::models::TaskDue>) -> Option<String> {
+    let d = due.as_ref()?;
+    if let Some(ref dt) = d.datetime {
+        if dt.len() >= 16 {
+            return Some(format!("{} {}", &dt[..10], &dt[11..16]));
+        }
+    }
+    Some(d.date[..d.date.len().min(10)].to_string())
+}
+
 fn render_task(
     out: &mut String,
     task: &Task,
@@ -203,9 +233,10 @@ fn render_task(
     depth: usize,
 ) {
     let indent = "    ".repeat(depth);
+    let due_str = format_due(&task.due);
     out.push_str(&format!(
-        "{}- [ ] {} <!-- id:{} -->\n",
-        indent, task.content, task.id
+        "{}- [ ] {}{} <!-- id:{} -->\n",
+        indent, task.content, due_str, task.id
     ));
     if let Some(children) = subtask_map.get(task.id.as_str()) {
         for child in children {
