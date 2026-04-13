@@ -198,7 +198,7 @@ end
 local function set_conceal(buf)
 	local function apply(win)
 		vim.wo[win].conceallevel = 3
-		vim.wo[win].concealcursor = "nvic"
+		vim.wo[win].concealcursor = "nvc"
 		vim.wo[win].foldmethod = "expr"
 		vim.wo[win].foldexpr = "getline(v:lnum)=~'^## '?'>1':getline(v:lnum)=~'^### '?'>2':'='"
 		vim.wo[win].foldlevel = 99
