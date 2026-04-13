@@ -197,11 +197,21 @@ fn render(
     Ok(out)
 }
 
-/// Format a `TaskDue` into a buffer string: `" due:YYYY-MM-DD"` or
-/// `" due:YYYY-MM-DD HH:MM"`, or `""` if there is no due date.
+/// Format a `TaskDue` into a buffer string: `" due:<value>"`, or `""` if there is no due date.
+///
+/// Prefers `d.string` (the user's original phrasing) when it is present and non-empty.
+/// Falls back to `d.datetime` (truncated to `HH:MM`) and then `d.date`.
 fn format_due(due: &Option<crate::models::TaskDue>) -> String {
     let Some(d) = due else { return String::new() };
-    // Prefer datetime (has time component), truncate to HH:MM.
+
+    // Prefer the original user phrasing returned by the API.
+    if let Some(ref s) = d.string {
+        if !s.is_empty() {
+            return format!(" due:{}", s);
+        }
+    }
+
+    // Fall back to datetime (has time component), truncated to HH:MM.
     if let Some(ref dt) = d.datetime {
         // dt is RFC3339-ish: "YYYY-MM-DDTHH:MM:SS[Z/offset]"
         if dt.len() >= 16 {
@@ -210,14 +220,25 @@ fn format_due(due: &Option<crate::models::TaskDue>) -> String {
             return format!(" due:{} {}", date_part, time_part);
         }
     }
-    // Fall back to date-only
+
+    // Last resort: date-only.
     format!(" due:{}", &d.date[..d.date.len().min(10)])
 }
 
-/// Normalize a `TaskDue` to the buffer form used in snapshots and diffs:
-/// `"YYYY-MM-DD"` or `"YYYY-MM-DD HH:MM"`, or `None` if no due date.
+/// Normalize a `TaskDue` to the buffer form used in snapshots and diffs.
+///
+/// Prefers `d.string` when present and non-empty (preserves the user's phrasing).
+/// Falls back to `d.datetime` (truncated to `HH:MM`) and then `d.date`.
 fn normalize_due(due: &Option<crate::models::TaskDue>) -> Option<String> {
     let d = due.as_ref()?;
+
+    // Prefer the original user phrasing.
+    if let Some(ref s) = d.string {
+        if !s.is_empty() {
+            return Some(s.clone());
+        }
+    }
+
     if let Some(ref dt) = d.datetime {
         if dt.len() >= 16 {
             return Some(format!("{} {}", &dt[..10], &dt[11..16]));

@@ -147,27 +147,104 @@ fn is_leap(y: u64) -> bool {
 
 // ─── Mutations ────────────────────────────────────────────────────────────────
 
+/// Classification of a due string captured from the buffer.
+pub enum DueKind<'a> {
+    /// ISO date only: `"YYYY-MM-DD"`
+    Date(&'a str),
+    /// ISO date + time: `"YYYY-MM-DD HH:MM"`
+    DateTime(&'a str),
+    /// Natural-language string with an associated language code (`"en"` or `"ru"`).
+    Natural { text: &'a str, lang: &'a str },
+}
+
+/// Classify a raw due string captured from the buffer.
+///
+/// - Matches `^\d{4}-\d{2}-\d{2}$`                    → `Date`
+/// - Matches `^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$`        → `DateTime`
+/// - Otherwise                                          → `Natural` (lang: "ru" if any
+///   Cyrillic U+0400-U+04FF char is present, else "en")
+pub fn classify_due(s: &str) -> DueKind<'_> {
+    if is_iso_date(s) {
+        return DueKind::Date(s);
+    }
+    if is_iso_datetime(s) {
+        return DueKind::DateTime(s);
+    }
+    let lang = detect_lang(s);
+    DueKind::Natural { text: s, lang }
+}
+
+/// Returns `"ru"` if any character falls in the Cyrillic block (U+0400–U+04FF),
+/// otherwise `"en"`.
+fn detect_lang(s: &str) -> &'static str {
+    if s.chars().any(|c| ('\u{0400}'..='\u{04FF}').contains(&c)) {
+        "ru"
+    } else {
+        "en"
+    }
+}
+
+/// Returns true iff `s` is exactly `YYYY-MM-DD` (ASCII digits and dashes only).
+fn is_iso_date(s: &str) -> bool {
+    if s.len() != 10 {
+        return false;
+    }
+    let b = s.as_bytes();
+    b[0].is_ascii_digit()
+        && b[1].is_ascii_digit()
+        && b[2].is_ascii_digit()
+        && b[3].is_ascii_digit()
+        && b[4] == b'-'
+        && b[5].is_ascii_digit()
+        && b[6].is_ascii_digit()
+        && b[7] == b'-'
+        && b[8].is_ascii_digit()
+        && b[9].is_ascii_digit()
+}
+
+/// Returns true iff `s` is exactly `YYYY-MM-DD HH:MM`.
+fn is_iso_datetime(s: &str) -> bool {
+    if s.len() != 16 {
+        return false;
+    }
+    let b = s.as_bytes();
+    is_iso_date(&s[..10]) && b[10] == b' ' && is_valid_time_bytes(&b[11..])
+}
+
+/// Returns true iff the 5-byte slice is `HH:MM` (digits and colon).
+fn is_valid_time_bytes(b: &[u8]) -> bool {
+    b.len() >= 5
+        && b[0].is_ascii_digit()
+        && b[1].is_ascii_digit()
+        && b[2] == b':'
+        && b[3].is_ascii_digit()
+        && b[4].is_ascii_digit()
+}
+
 /// Apply due-date fields to a mutable JSON body according to the Todoist API rules:
-/// - `None`                    → `"due_string": ""` (clears the due date)
-/// - `Some("YYYY-MM-DD")`      → `"due_date": "YYYY-MM-DD"`
-/// - `Some("YYYY-MM-DD HH:MM")`→ `"due_datetime": "YYYY-MM-DDTHH:MM:00"`
+/// - `None`                               → `"due_string": ""` (clears the due date)
+/// - `Some("YYYY-MM-DD")`                 → `"due_date": "YYYY-MM-DD"`
+/// - `Some("YYYY-MM-DD HH:MM")`           → `"due_datetime": "YYYY-MM-DDTHH:MM:00"`
+/// - `Some(<natural language>)`           → `"due_string": s, "due_lang": lang`
 fn apply_due(body: &mut serde_json::Value, due: Option<&str>) {
     match due {
         None => {
             body["due_string"] = json!("");
         }
-        Some(s) if s.len() == 10 => {
-            body["due_date"] = json!(s);
-        }
-        Some(s) if s.len() == 16 => {
-            // "YYYY-MM-DD HH:MM" → "YYYY-MM-DDTHH:MM:00"
-            let iso = format!("{}T{}:00", &s[..10], &s[11..16]);
-            body["due_datetime"] = json!(iso);
-        }
-        Some(s) => {
-            // Unexpected format — fall back to due_string and let Todoist parse it
-            body["due_string"] = json!(s);
-        }
+        Some(s) => match classify_due(s) {
+            DueKind::Date(d) => {
+                body["due_date"] = json!(d);
+            }
+            DueKind::DateTime(dt) => {
+                // "YYYY-MM-DD HH:MM" → "YYYY-MM-DDTHH:MM:00"
+                let iso = format!("{}T{}:00", &dt[..10], &dt[11..16]);
+                body["due_datetime"] = json!(iso);
+            }
+            DueKind::Natural { text, lang } => {
+                body["due_string"] = json!(text);
+                body["due_lang"] = json!(lang);
+            }
+        },
     }
 }
 
@@ -343,4 +420,94 @@ pub fn delete_task(client: &Client, token: &str, task_id: &str) -> Result<(), St
         return Err(http_err(status, &format!("tasks/{} [DELETE]", task_id)));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classify_iso_date() {
+        let kind = classify_due("2026-04-20");
+        assert!(matches!(kind, DueKind::Date("2026-04-20")));
+    }
+
+    #[test]
+    fn classify_iso_datetime() {
+        let kind = classify_due("2026-04-20 15:30");
+        assert!(matches!(kind, DueKind::DateTime("2026-04-20 15:30")));
+    }
+
+    #[test]
+    fn classify_natural_english() {
+        let kind = classify_due("next Monday");
+        match kind {
+            DueKind::Natural { text, lang } => {
+                assert_eq!(text, "next Monday");
+                assert_eq!(lang, "en");
+            }
+            _ => panic!("expected Natural"),
+        }
+    }
+
+    #[test]
+    fn classify_natural_russian() {
+        let kind = classify_due("завтра");
+        match kind {
+            DueKind::Natural { text, lang } => {
+                assert_eq!(text, "завтра");
+                assert_eq!(lang, "ru");
+            }
+            _ => panic!("expected Natural"),
+        }
+    }
+
+    #[test]
+    fn classify_natural_russian_mixed() {
+        // A string with both Latin and Cyrillic should still be detected as Russian.
+        let kind = classify_due("every понедельник");
+        match kind {
+            DueKind::Natural { lang, .. } => assert_eq!(lang, "ru"),
+            _ => panic!("expected Natural"),
+        }
+    }
+
+    #[test]
+    fn apply_due_none_clears() {
+        let mut body = serde_json::json!({});
+        apply_due(&mut body, None);
+        assert_eq!(body["due_string"], serde_json::json!(""));
+    }
+
+    #[test]
+    fn apply_due_date() {
+        let mut body = serde_json::json!({});
+        apply_due(&mut body, Some("2026-04-20"));
+        assert_eq!(body["due_date"], serde_json::json!("2026-04-20"));
+        assert!(body.get("due_string").is_none());
+    }
+
+    #[test]
+    fn apply_due_datetime() {
+        let mut body = serde_json::json!({});
+        apply_due(&mut body, Some("2026-04-20 15:30"));
+        assert_eq!(body["due_datetime"], serde_json::json!("2026-04-20T15:30:00"));
+        assert!(body.get("due_string").is_none());
+    }
+
+    #[test]
+    fn apply_due_natural_english() {
+        let mut body = serde_json::json!({});
+        apply_due(&mut body, Some("tomorrow"));
+        assert_eq!(body["due_string"], serde_json::json!("tomorrow"));
+        assert_eq!(body["due_lang"], serde_json::json!("en"));
+    }
+
+    #[test]
+    fn apply_due_natural_russian() {
+        let mut body = serde_json::json!({});
+        apply_due(&mut body, Some("завтра"));
+        assert_eq!(body["due_string"], serde_json::json!("завтра"));
+        assert_eq!(body["due_lang"], serde_json::json!("ru"));
+    }
 }

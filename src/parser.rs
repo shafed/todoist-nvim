@@ -14,18 +14,17 @@ use std::collections::HashMap;
 /// Marker that prefixes a due date in the buffer (e.g. `due:2026-04-20`).
 pub const DUE_MARKER: &str = "due:";
 
-/// Extract a `due:` date from the end of a content string.
+/// Extract a `due:` value from the end of a content string.
 ///
-/// Looks for the literal marker `due:` near the end of `s`, then validates
-/// the trailing substring as `YYYY-MM-DD` or `YYYY-MM-DD HH:MM` using only
-/// char-level checks (no regex crate needed). An optional single space
-/// between `due:` and the date is accepted (`due:2026-04-20` and
-/// `due: 2026-04-20` both parse).
+/// Looks for the last `due:` in `s`, then captures everything after it
+/// (after stripping at most one optional leading space) until end of input.
+/// The captured string is stored verbatim — no format validation is performed,
+/// so natural-language strings like `"tomorrow"` or `"завтра"` are accepted.
 ///
 /// Returns `(clean_content, Option<due_string>)`.
-/// - If a valid date is found: returns content with the `due:…` segment stripped,
-///   and the captured date string.
-/// - If `due:` is present but the text after it is not a valid date: returns
+/// - If a non-empty value is found: returns content with the `due:…` segment
+///   stripped, and the raw due string.
+/// - If `due:` is present but nothing follows (or only whitespace): returns
 ///   the original content unchanged and `None` (caller should push a warning).
 fn extract_due(s: &str) -> (String, Option<String>) {
     let Some(marker_pos) = s.rfind(DUE_MARKER) else {
@@ -35,63 +34,20 @@ fn extract_due(s: &str) -> (String, Option<String>) {
     // Everything after the marker.
     let after_marker = &s[marker_pos + DUE_MARKER.len()..];
 
-    // Allow an optional leading space between `due:` and the date.
-    let date_str = after_marker.trim_start_matches(' ');
+    // Strip at most one optional leading space, then trim trailing whitespace.
+    let due_str = after_marker
+        .strip_prefix(' ')
+        .unwrap_or(after_marker)
+        .trim_end();
 
-    // Validate: must start with YYYY-MM-DD (10 chars of digits/dashes)
-    if !is_valid_date_prefix(date_str) {
-        // marker present but unparseable — signal the caller via None
+    if due_str.is_empty() {
+        // marker present but nothing after it
         return (s.to_string(), None);
     }
-
-    let rest = &date_str[10..]; // after YYYY-MM-DD
-    let due = if rest.is_empty() || rest.trim().is_empty() {
-        // Date only
-        date_str[..10].to_string()
-    } else if let Some(time_part) = rest.strip_prefix(' ') {
-        // Possible "HH:MM" suffix
-        if is_valid_time_prefix(time_part) && (time_part.len() == 5 || time_part[5..].trim().is_empty()) {
-            format!("{} {}", &date_str[..10], &time_part[..5])
-        } else {
-            // Not a valid time — treat whole thing as unparseable
-            return (s.to_string(), None);
-        }
-    } else {
-        // Extra non-space characters immediately after date
-        return (s.to_string(), None);
-    };
 
     // Strip from content: everything from the marker position back (trim trailing spaces too)
     let clean = s[..marker_pos].trim_end().to_string();
-    (clean, Some(due))
-}
-
-/// Returns true if `s` starts with `DDDD-DD-DD` where D is a decimal digit
-/// and the separators are `-`.
-fn is_valid_date_prefix(s: &str) -> bool {
-    if s.len() < 10 {
-        return false;
-    }
-    let b = s.as_bytes();
-    b[0].is_ascii_digit()
-        && b[1].is_ascii_digit()
-        && b[2].is_ascii_digit()
-        && b[3].is_ascii_digit()
-        && b[4] == b'-'
-        && b[5].is_ascii_digit()
-        && b[6].is_ascii_digit()
-        && b[7] == b'-'
-        && b[8].is_ascii_digit()
-        && b[9].is_ascii_digit()
-}
-
-/// Returns true if `s` starts with `HH:MM` (5 chars, digits and colon).
-fn is_valid_time_prefix(s: &str) -> bool {
-    if s.len() < 5 {
-        return false;
-    }
-    let b = s.as_bytes();
-    b[0].is_ascii_digit() && b[1].is_ascii_digit() && b[2] == b':' && b[3].is_ascii_digit() && b[4].is_ascii_digit()
+    (clean, Some(due_str.to_string()))
 }
 
 fn extract_comment_value(line: &str, key: &str) -> Option<String> {
@@ -181,11 +137,11 @@ pub fn parse(lines: &[String]) -> ParseResult {
         let (content_raw, task_id) = strip_comment(after_checkbox);
         let content_trimmed = content_raw.trim();
 
-        // Extract optional due date from content (due:YYYY-MM-DD or due:YYYY-MM-DD HH:MM)
+        // Extract optional due date/string from content.
         let (clean_content, due) = extract_due(content_trimmed);
         if content_trimmed.contains(DUE_MARKER) && due.is_none() {
             warnings.push(format!(
-                "Line {}: 'due:' found but date is unparseable — ignoring due date",
+                "Line {}: 'due:' is empty — ignoring due date",
                 line_num
             ));
         }
@@ -354,5 +310,37 @@ mod tests {
         let r = parse(&buf);
         assert_eq!(r.tasks[0].content, "Buy milk");
         assert!(!r.tasks[0].content.contains("due:"));
+    }
+
+    #[test]
+    fn parses_natural_language_english() {
+        let buf = lines("## Work <!-- project:p1 -->\n- [ ] Call Bob due:next Monday <!-- id:t1 -->");
+        let r = parse(&buf);
+        assert_eq!(r.tasks[0].due.as_deref(), Some("next Monday"));
+        assert_eq!(r.tasks[0].content, "Call Bob");
+    }
+
+    #[test]
+    fn parses_natural_language_with_space_after_marker() {
+        let buf = lines("## Work <!-- project:p1 -->\n- [ ] Call Bob due: tomorrow <!-- id:t1 -->");
+        let r = parse(&buf);
+        assert_eq!(r.tasks[0].due.as_deref(), Some("tomorrow"));
+        assert_eq!(r.tasks[0].content, "Call Bob");
+    }
+
+    #[test]
+    fn parses_natural_language_russian() {
+        let buf = lines("## Work <!-- project:p1 -->\n- [ ] Позвонить due:завтра <!-- id:t1 -->");
+        let r = parse(&buf);
+        assert_eq!(r.tasks[0].due.as_deref(), Some("завтра"));
+        assert_eq!(r.tasks[0].content, "Позвонить");
+    }
+
+    #[test]
+    fn empty_due_produces_warning_and_none() {
+        let buf = lines("## Work <!-- project:p1 -->\n- [ ] Task due: <!-- id:t1 -->");
+        let r = parse(&buf);
+        assert_eq!(r.tasks[0].due, None);
+        assert!(r.warnings.iter().any(|w| w.contains("'due:' is empty")));
     }
 }

@@ -38,6 +38,8 @@ pub struct TaskDue {
     pub date: String,             // "YYYY-MM-DD" or "YYYY-MM-DDTHH:MM:SS"
     #[serde(default)]
     pub datetime: Option<String>, // present when task has a specific time
+    #[serde(default)]
+    pub string: Option<String>,   // user's original phrasing (e.g. "tomorrow", "next Monday")
 }
 
 #[derive(Debug, Deserialize, Clone)]

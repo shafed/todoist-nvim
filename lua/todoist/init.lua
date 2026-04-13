@@ -54,6 +54,9 @@ local function ensure_highlights()
 	if vim.fn.hlexists("TodoistChecked") == 0 then
 		vim.api.nvim_set_hl(0, "TodoistChecked", { link = "String", default = true })
 	end
+	if vim.fn.hlexists("TodoistDue") == 0 then
+		vim.api.nvim_set_hl(0, "TodoistDue", { link = "Special", default = true })
+	end
 end
 
 -- ─── Core checkbox renderer ────────────────────────────────────────────────────────────
@@ -244,6 +247,10 @@ local function create_buf(name)
 	vim.bo[buf].bufhidden = "wipe"
 	vim.bo[buf].swapfile = false
 	vim.bo[buf].filetype = "todoist"
+	ensure_highlights()
+	vim.api.nvim_buf_call(buf, function()
+		vim.cmd([[syntax match TodoistDue /\<due:\S[^<]*/ containedin=ALL]])
+	end)
 	-- Wipe the Todoist buffer before session save so session plugins
 	-- restore the previous real file instead.
 	vim.api.nvim_create_autocmd("VimLeavePre", {
