@@ -11,33 +11,36 @@
 use crate::models::BufferTask;
 use std::collections::HashMap;
 
-/// Extract a 📅 due date from the end of a content string.
+/// Marker that prefixes a due date in the buffer (e.g. `due:2026-04-20`).
+pub const DUE_MARKER: &str = "due:";
+
+/// Extract a `due:` date from the end of a content string.
 ///
-/// Looks for the literal `📅 ` (U+1F4C5 followed by a space) near the end of
-/// `s`, then validates the trailing substring as `YYYY-MM-DD` or
-/// `YYYY-MM-DD HH:MM` using only char-level checks (no regex crate needed).
+/// Looks for the literal marker `due:` near the end of `s`, then validates
+/// the trailing substring as `YYYY-MM-DD` or `YYYY-MM-DD HH:MM` using only
+/// char-level checks (no regex crate needed). An optional single space
+/// between `due:` and the date is accepted (`due:2026-04-20` and
+/// `due: 2026-04-20` both parse).
 ///
 /// Returns `(clean_content, Option<due_string>)`.
-/// - If a valid date is found: returns content with the `📅 …` segment stripped,
+/// - If a valid date is found: returns content with the `due:…` segment stripped,
 ///   and the captured date string.
-/// - If `📅` is present but the text after it is not a valid date: returns
+/// - If `due:` is present but the text after it is not a valid date: returns
 ///   the original content unchanged and `None` (caller should push a warning).
 fn extract_due(s: &str) -> (String, Option<String>) {
-    // The calendar emoji is 3 bytes in UTF-8 (U+1F4C5 = 4 bytes actually).
-    // Find it by scanning for the char.
-    let Some(emoji_byte_pos) = s.find('\u{1F4C5}') else {
+    let Some(marker_pos) = s.rfind(DUE_MARKER) else {
         return (s.to_string(), None);
     };
 
-    // Everything after the emoji
-    let after_emoji = &s[emoji_byte_pos + '\u{1F4C5}'.len_utf8()..];
+    // Everything after the marker.
+    let after_marker = &s[marker_pos + DUE_MARKER.len()..];
 
-    // Expect a space then the date value
-    let date_str = after_emoji.trim_start_matches(' ');
+    // Allow an optional leading space between `due:` and the date.
+    let date_str = after_marker.trim_start_matches(' ');
 
     // Validate: must start with YYYY-MM-DD (10 chars of digits/dashes)
     if !is_valid_date_prefix(date_str) {
-        // 📅 present but unparseable — signal the caller via empty due
+        // marker present but unparseable — signal the caller via None
         return (s.to_string(), None);
     }
 
@@ -58,8 +61,8 @@ fn extract_due(s: &str) -> (String, Option<String>) {
         return (s.to_string(), None);
     };
 
-    // Strip from content: everything from the emoji position back (trim trailing spaces too)
-    let clean = s[..emoji_byte_pos].trim_end().to_string();
+    // Strip from content: everything from the marker position back (trim trailing spaces too)
+    let clean = s[..marker_pos].trim_end().to_string();
     (clean, Some(due))
 }
 
@@ -178,11 +181,11 @@ pub fn parse(lines: &[String]) -> ParseResult {
         let (content_raw, task_id) = strip_comment(after_checkbox);
         let content_trimmed = content_raw.trim();
 
-        // Extract optional due date from content (📅 YYYY-MM-DD or YYYY-MM-DD HH:MM)
+        // Extract optional due date from content (due:YYYY-MM-DD or due:YYYY-MM-DD HH:MM)
         let (clean_content, due) = extract_due(content_trimmed);
-        if content_trimmed.contains('\u{1F4C5}') && due.is_none() {
+        if content_trimmed.contains(DUE_MARKER) && due.is_none() {
             warnings.push(format!(
-                "Line {}: 📅 found but date is unparseable — ignoring due date",
+                "Line {}: 'due:' found but date is unparseable — ignoring due date",
                 line_num
             ));
         }
@@ -314,7 +317,7 @@ mod tests {
 
     #[test]
     fn parses_date_only() {
-        let buf = lines("## Work <!-- project:p1 -->\n- [ ] Task \u{1F4C5} 2026-04-20 <!-- id:t1 -->");
+        let buf = lines("## Work <!-- project:p1 -->\n- [ ] Task due:2026-04-20 <!-- id:t1 -->");
         let r = parse(&buf);
         assert_eq!(r.tasks.len(), 1);
         assert_eq!(r.tasks[0].due.as_deref(), Some("2026-04-20"));
@@ -323,10 +326,18 @@ mod tests {
 
     #[test]
     fn parses_datetime() {
-        let buf = lines("## Work <!-- project:p1 -->\n- [ ] Task \u{1F4C5} 2026-04-20 15:30 <!-- id:t1 -->");
+        let buf = lines("## Work <!-- project:p1 -->\n- [ ] Task due:2026-04-20 15:30 <!-- id:t1 -->");
         let r = parse(&buf);
         assert_eq!(r.tasks.len(), 1);
         assert_eq!(r.tasks[0].due.as_deref(), Some("2026-04-20 15:30"));
+    }
+
+    #[test]
+    fn parses_date_with_space_after_marker() {
+        let buf = lines("## Work <!-- project:p1 -->\n- [ ] Task due: 2026-04-20 <!-- id:t1 -->");
+        let r = parse(&buf);
+        assert_eq!(r.tasks[0].due.as_deref(), Some("2026-04-20"));
+        assert_eq!(r.tasks[0].content, "Task");
     }
 
     #[test]
@@ -339,9 +350,9 @@ mod tests {
 
     #[test]
     fn date_stripped_from_content() {
-        let buf = lines("## Work <!-- project:p1 -->\n- [ ] Buy milk \u{1F4C5} 2026-05-01 <!-- id:t1 -->");
+        let buf = lines("## Work <!-- project:p1 -->\n- [ ] Buy milk due:2026-05-01 <!-- id:t1 -->");
         let r = parse(&buf);
         assert_eq!(r.tasks[0].content, "Buy milk");
-        assert!(!r.tasks[0].content.contains('\u{1F4C5}'));
+        assert!(!r.tasks[0].content.contains("due:"));
     }
 }

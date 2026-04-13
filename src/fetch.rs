@@ -197,8 +197,8 @@ fn render(
     Ok(out)
 }
 
-/// Format a `TaskDue` into a buffer string: `" 📅 YYYY-MM-DD"` or
-/// `" 📅 YYYY-MM-DD HH:MM"`, or `""` if there is no due date.
+/// Format a `TaskDue` into a buffer string: `" due:YYYY-MM-DD"` or
+/// `" due:YYYY-MM-DD HH:MM"`, or `""` if there is no due date.
 fn format_due(due: &Option<crate::models::TaskDue>) -> String {
     let Some(d) = due else { return String::new() };
     // Prefer datetime (has time component), truncate to HH:MM.
@@ -207,11 +207,11 @@ fn format_due(due: &Option<crate::models::TaskDue>) -> String {
         if dt.len() >= 16 {
             let date_part = &dt[..10];
             let time_part = &dt[11..16];
-            return format!(" \u{1F4C5} {} {}", date_part, time_part);
+            return format!(" due:{} {}", date_part, time_part);
         }
     }
     // Fall back to date-only
-    format!(" \u{1F4C5} {}", &d.date[..d.date.len().min(10)])
+    format!(" due:{}", &d.date[..d.date.len().min(10)])
 }
 
 /// Normalize a `TaskDue` to the buffer form used in snapshots and diffs:
