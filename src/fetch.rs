@@ -112,6 +112,10 @@ fn render(
     sections: &[crate::models::Section],
     tasks: &[Task],
 ) -> Result<String, String> {
+    if projects.is_empty() {
+        return Ok("## No active tasks\n\nAll projects appear to be empty.\n".to_string());
+    }
+
     let mut sections_by_project: HashMap<&str, Vec<&crate::models::Section>> = HashMap::new();
     for sec in sections {
         sections_by_project
@@ -151,18 +155,17 @@ fn render(
 
     let mut out = String::with_capacity(4096);
 
+    // Iterate projects (not tasks) so empty projects still render — same for sections.
     for project in projects {
         let pid = project.id.as_str();
-        let Some(section_map) = by_project.get(pid) else {
-            continue;
-        };
+        let section_map = by_project.get(pid);
 
         out.push_str(&format!(
             "## {} <!-- project:{} -->\n\n",
             project.name, project.id
         ));
 
-        if let Some(unsectioned) = section_map.get(&None) {
+        if let Some(unsectioned) = section_map.and_then(|m| m.get(&None)) {
             for task in unsectioned {
                 render_task(&mut out, task, &subtask_map, 0);
             }
@@ -172,26 +175,18 @@ fn render(
         if let Some(secs) = sections_by_project.get(pid) {
             for sec in secs {
                 let sid = sec.id.as_str();
-                let Some(tasks_in_sec) = section_map.get(&Some(sid)) else {
-                    continue;
-                };
-                if tasks_in_sec.is_empty() {
-                    continue;
-                }
                 out.push_str(&format!(
                     "### {} <!-- section:{} -->\n\n",
                     sec.name, sec.id
                 ));
-                for task in tasks_in_sec {
-                    render_task(&mut out, task, &subtask_map, 0);
+                if let Some(tasks_in_sec) = section_map.and_then(|m| m.get(&Some(sid))) {
+                    for task in tasks_in_sec {
+                        render_task(&mut out, task, &subtask_map, 0);
+                    }
                 }
                 out.push('\n');
             }
         }
-    }
-
-    if out.is_empty() {
-        return Ok("## No active tasks\n\nAll projects appear to be empty.\n".to_string());
     }
 
     Ok(out)
@@ -263,5 +258,53 @@ fn render_task(
         for child in children {
             render_task(out, child, subtask_map, depth + 1);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{Project, Section};
+
+    fn project(id: &str, name: &str) -> Project {
+        Project {
+            id: id.to_string(),
+            name: name.to_string(),
+            child_order: 0,
+            inbox_project: false,
+        }
+    }
+
+    fn section(id: &str, project_id: &str, name: &str) -> Section {
+        Section {
+            id: id.to_string(),
+            project_id: project_id.to_string(),
+            name: name.to_string(),
+            section_order: 0,
+        }
+    }
+
+    #[test]
+    fn empty_project_renders_h2() {
+        let out = render(&[project("p1", "Work")], &[], &[]).unwrap();
+        assert!(out.contains("## Work <!-- project:p1 -->"));
+    }
+
+    #[test]
+    fn empty_section_renders_h3() {
+        let out = render(
+            &[project("p1", "Work")],
+            &[section("s1", "p1", "Backend")],
+            &[],
+        )
+        .unwrap();
+        assert!(out.contains("## Work <!-- project:p1 -->"));
+        assert!(out.contains("### Backend <!-- section:s1 -->"));
+    }
+
+    #[test]
+    fn no_projects_returns_placeholder() {
+        let out = render(&[], &[], &[]).unwrap();
+        assert!(out.contains("No active tasks"));
     }
 }

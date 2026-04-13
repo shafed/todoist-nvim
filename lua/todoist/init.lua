@@ -60,11 +60,10 @@ local function ensure_highlights()
 end
 
 -- ─── Core checkbox renderer ────────────────────────────────────────────────────────────
-local function render_checkbox(buf, lnum0, marker_col, col_s, col_e, cfg, is_cursor)
-	if is_cursor then
-		return
-	end
-
+-- Icon render stays active on the cursor line in all modes so comment-conceal can
+-- coexist with concealcursor="nvic". Users never type inside "- [ ]" — comment-guard
+-- keymaps (A/S/C/D/cc) keep the cursor out of the prefix region.
+local function render_checkbox(buf, lnum0, marker_col, col_s, col_e, cfg, _is_cursor)
 	vim.api.nvim_buf_set_extmark(buf, NS, lnum0, marker_col, {
 		end_col = col_s,
 		conceal = "",
@@ -151,6 +150,19 @@ local function apply_extmark_conceal(buf, cursor_line)
 			})
 		end
 
+		-- Highlight "due:..." with an extmark so markdown treesitter doesn't override it.
+		local due_s, due_e = line:find("due:%S[^<]*")
+		if due_s then
+			local hl_end = ms and (ms - 1) or due_e
+			if hl_end and hl_end >= due_s then
+				vim.api.nvim_buf_set_extmark(buf, NS, lnum0, due_s - 1, {
+					end_col = hl_end,
+					hl_group = "TodoistDue",
+					priority = 110,
+				})
+			end
+		end
+
 		local matched_custom = false
 		for _, custom in ipairs(CHECKBOX.custom) do
 			local escaped = vim.pesc(custom.raw)
@@ -201,7 +213,7 @@ end
 local function set_conceal(buf)
 	local function apply(win)
 		vim.wo[win].conceallevel = 3
-		vim.wo[win].concealcursor = "nvc"
+		vim.wo[win].concealcursor = "nvic"
 		vim.wo[win].foldmethod = "expr"
 		vim.wo[win].foldexpr = "getline(v:lnum)=~'^## '?'>1':getline(v:lnum)=~'^### '?'>2':'='"
 		vim.wo[win].foldlevel = 99
@@ -230,7 +242,7 @@ local function set_conceal(buf)
 end
 
 local function setup_cursor_conceal(buf)
-	vim.api.nvim_create_autocmd("CursorMoved", {
+	vim.api.nvim_create_autocmd({ "CursorMoved", "CursorMovedI" }, {
 		buffer = buf,
 		callback = function()
 			local row = vim.api.nvim_win_get_cursor(0)[1]
@@ -246,11 +258,18 @@ local function create_buf(name)
 	vim.bo[buf].buftype = "acwrite"
 	vim.bo[buf].bufhidden = "wipe"
 	vim.bo[buf].swapfile = false
-	vim.bo[buf].filetype = "todoist"
+	-- Use markdown so bullets.nvim / render-markdown / other FileType=markdown
+	-- plugins auto-attach (handles <CR>-after-checkbox, list continuation, etc.).
+	-- vim.b[buf].todoist lets our own code still recognize this buffer.
+	vim.bo[buf].filetype = "markdown"
+	vim.b[buf].todoist = true
+	-- Parser treats every 4 leading spaces as one indent level; enforce that here
+	-- so insert-mode <Tab> produces a valid subtask indent instead of a literal tab.
+	vim.bo[buf].expandtab = true
+	vim.bo[buf].tabstop = 4
+	vim.bo[buf].shiftwidth = 4
+	vim.bo[buf].softtabstop = 4
 	ensure_highlights()
-	vim.api.nvim_buf_call(buf, function()
-		vim.cmd([[syntax match TodoistDue /\<due:\S[^<]*/ containedin=ALL]])
-	end)
 	-- Wipe the Todoist buffer before session save so session plugins
 	-- restore the previous real file instead.
 	vim.api.nvim_create_autocmd("VimLeavePre", {
