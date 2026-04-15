@@ -490,6 +490,14 @@ function M.sync()
 		)
 		return
 	end
+	if nav.current_view() ~= nav.VIEW.ALL_PROJECTS then
+		vim.notify(
+			"Cannot sync from narrow view — press <S-Tab> to return to all projects, then sync.",
+			vim.log.levels.WARN,
+			{ title = "todoist-nvim" }
+		)
+		return
+	end
 	local lines = vim.api.nvim_buf_get_lines(b, 0, -1, false)
 	if #lines == 0 then
 		vim.notify("Buffer is empty.", vim.log.levels.WARN, { title = "todoist-nvim" })

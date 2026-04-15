@@ -48,6 +48,8 @@ pub fn run(buffer_file: &str) -> Result<(), String> {
         }
     };
 
+    let original_snapshot = snapshot_tasks.clone();
+
     let mut ops = compute_ops(&buffer_tasks, &snapshot_tasks, &mut summary);
 
     // Detect reorder: compare buffer position order vs snapshot child_order.
@@ -66,6 +68,19 @@ pub fn run(buffer_file: &str) -> Result<(), String> {
     let mut new_id_map: HashMap<usize, String> = HashMap::new();
 
     execute_ops(ops, &client, &token, &buffer_tasks, &mut new_id_map, &mut summary);
+
+    if summary.errors.is_empty() {
+        let new_snap_tasks = rebuild_snapshot(&original_snapshot, &buffer_tasks, &new_id_map);
+        let snap = crate::models::Snapshot::new(new_snap_tasks);
+        if let Err(e) = snapshot::save(&snap) {
+            summary.warnings.push(format!("Could not save post-sync snapshot: {}", e));
+        }
+    } else {
+        summary.warnings.push(
+            "Snapshot not updated due to sync errors; next sync may show phantom changes.".to_string()
+        );
+    }
+
     summary.print();
     Ok(())
 }
@@ -310,6 +325,60 @@ fn resolve_parent_id(
     Some(pid.clone())
 }
 
+// ─── Snapshot rebuild ────────────────────────────────────────────────────────
+
+fn rebuild_snapshot(
+    original: &HashMap<String, SnapshotTask>,
+    buffer_tasks: &[BufferTask],
+    new_id_map: &HashMap<usize, String>,
+) -> HashMap<String, SnapshotTask> {
+    let buffer_ids: HashSet<String> = buffer_tasks
+        .iter()
+        .filter_map(|t| t.id.clone())
+        .collect();
+
+    // Start from a clone; we will mutate it to reflect post-sync state.
+    let mut result = original.clone();
+
+    // Remove tasks that were in the snapshot but absent from the buffer (user deleted them).
+    result.retain(|id, _| buffer_ids.contains(id.as_str()));
+
+    for (buf_idx, task) in buffer_tasks.iter().enumerate() {
+        match &task.id {
+            Some(id) => {
+                if task.checked {
+                    result.remove(id.as_str());
+                } else if let Some(entry) = result.get_mut(id.as_str()) {
+                    entry.content    = task.content.clone();
+                    entry.due        = task.due.clone();
+                    entry.project_id = task.project_id.clone().unwrap_or_else(|| entry.project_id.clone());
+                    entry.section_id = task.section_id.clone();
+                    entry.parent_id  = task.parent_id.clone();
+                    entry.checked    = false;
+                }
+            }
+            None => {
+                if let Some(server_id) = new_id_map.get(&buf_idx) {
+                    let new_task = SnapshotTask {
+                        id:         server_id.clone(),
+                        content:    task.content.clone(),
+                        project_id: task.project_id.clone().unwrap_or_default(),
+                        section_id: task.section_id.clone(),
+                        parent_id:  task.parent_id.clone(),
+                        due:        task.due.clone(),
+                        checked:    false,
+                        child_order: 0,
+                    };
+                    result.insert(server_id.clone(), new_task);
+                }
+                // If no entry in new_id_map the create failed; skip.
+            }
+        }
+    }
+
+    result
+}
+
 // ─── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -500,5 +569,51 @@ mod tests {
 
         let result = compute_reorder(&buf, &snap);
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn rebuild_snapshot_applies_create() {
+        let original = snap_map(vec![]);
+        let buf = vec![bt(None, "Brand new", false)];
+        let mut id_map = HashMap::new();
+        id_map.insert(0usize, "server-99".to_string());
+        let result = rebuild_snapshot(&original, &buf, &id_map);
+        assert!(result.contains_key("server-99"));
+        assert_eq!(result["server-99"].content, "Brand new");
+    }
+
+    #[test]
+    fn rebuild_snapshot_applies_update() {
+        let original = snap_map(vec![("t1", "Old content", false)]);
+        let buf = vec![bt(Some("t1"), "New content", false)];
+        let result = rebuild_snapshot(&original, &buf, &HashMap::new());
+        assert_eq!(result["t1"].content, "New content");
+    }
+
+    #[test]
+    fn rebuild_snapshot_removes_completed() {
+        let original = snap_map(vec![("t1", "Task", false)]);
+        let buf = vec![bt(Some("t1"), "Task", true)];
+        let result = rebuild_snapshot(&original, &buf, &HashMap::new());
+        assert!(!result.contains_key("t1"));
+    }
+
+    #[test]
+    fn rebuild_snapshot_removes_deleted() {
+        let original = snap_map(vec![("t1", "Task A", false), ("t2", "Task B", false)]);
+        // Buffer only has t1; t2 was deleted by the user.
+        let buf = vec![bt(Some("t1"), "Task A", false)];
+        let result = rebuild_snapshot(&original, &buf, &HashMap::new());
+        assert!(result.contains_key("t1"));
+        assert!(!result.contains_key("t2"));
+    }
+
+    #[test]
+    fn rebuild_snapshot_preserves_unchanged() {
+        let original = snap_map(vec![("t1", "Same", false)]);
+        let buf = vec![bt(Some("t1"), "Same", false)];
+        let result = rebuild_snapshot(&original, &buf, &HashMap::new());
+        assert_eq!(result["t1"].content, original["t1"].content);
+        assert_eq!(result["t1"].checked, original["t1"].checked);
     }
 }
