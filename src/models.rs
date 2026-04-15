@@ -167,12 +167,20 @@ pub enum SyncOp {
     Reorder {
         items: Vec<(String, i64)>, // (task_id, new_child_order)
     },
+    Move {
+        id: String,
+        content: String,
+        project_id: String,
+        section_id: Option<String>,
+        parent_id: Option<String>,
+    },
 }
 
 #[derive(Debug, Default)]
 pub struct SyncSummary {
     pub created: usize,
     pub updated: usize,
+    pub moved: usize,
     pub completed: usize,
     pub reopened: usize,
     pub deleted: usize,
@@ -191,6 +199,7 @@ impl SyncSummary {
         println!("Sync complete:");
         if self.created   > 0 { println!("  Created:   {}", self.created); }
         if self.updated   > 0 { println!("  Updated:   {}", self.updated); }
+        if self.moved     > 0 { println!("  Moved:     {}", self.moved); }
         if self.completed > 0 { println!("  Completed: {}", self.completed); }
         if self.reopened  > 0 { println!("  Reopened:  {}", self.reopened); }
         if self.deleted   > 0 { println!("  Deleted:   {}", self.deleted); }
@@ -201,6 +210,6 @@ impl SyncSummary {
     }
 
     pub fn has_changes(&self) -> bool {
-        self.created + self.updated + self.completed + self.reopened + self.deleted + self.reordered > 0
+        self.created + self.updated + self.moved + self.completed + self.reopened + self.deleted + self.reordered > 0
     }
 }

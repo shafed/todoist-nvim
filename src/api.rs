@@ -389,6 +389,44 @@ pub fn reorder_tasks(
     Ok(())
 }
 
+/// Move a task via the Sync API v9 (item_move command).
+/// Priority for mutually-exclusive fields: parent_id > section_id > project_id.
+pub fn move_task(
+    client: &Client,
+    token: &str,
+    task_id: &str,
+    project_id: Option<&str>,
+    section_id: Option<&str>,
+    parent_id: Option<&str>,
+) -> Result<(), String> {
+    let mut args = json!({ "id": task_id });
+    if let Some(pid) = parent_id {
+        args["parent_id"] = json!(pid);
+    } else if let Some(sid) = section_id {
+        args["section_id"] = json!(sid);
+    } else if let Some(pid) = project_id {
+        args["project_id"] = json!(pid);
+    } else {
+        return Ok(());
+    }
+    let commands = json!([{
+        "type": "item_move",
+        "uuid": uuid_v4(),
+        "args": args
+    }]);
+    let resp = client
+        .post("https://api.todoist.com/sync/v9/sync")
+        .header("Authorization", format!("Bearer {}", token))
+        .form(&[("commands", commands.to_string())])
+        .send()
+        .map_err(|e| format!("Network error (move {}): {}", task_id, e))?;
+    let status = resp.status().as_u16();
+    if status < 200 || status >= 300 {
+        return Err(http_err(status, "sync/v9 item_move"));
+    }
+    Ok(())
+}
+
 /// Simple UUID v4 generator (random hex, no external crate needed).
 fn uuid_v4() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};

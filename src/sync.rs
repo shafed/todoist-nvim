@@ -161,6 +161,20 @@ fn compute_ops(
                                 new_due: task.due.clone(),
                             }));
                         }
+                        let proj_changed = task.project_id.as_deref() != Some(snap.project_id.as_str());
+                        let sec_changed  = task.section_id != snap.section_id;
+                        let par_changed  = task.parent_id != snap.parent_id;
+                        if proj_changed || sec_changed || par_changed {
+                            if let Some(pid) = &task.project_id {
+                                ops.push((idx, SyncOp::Move {
+                                    id: id.clone(),
+                                    content: task.content.clone(),
+                                    project_id: pid.clone(),
+                                    section_id: task.section_id.clone(),
+                                    parent_id: task.parent_id.clone(),
+                                }));
+                            }
+                        }
                     }
                 }
             }
@@ -261,7 +275,7 @@ fn execute_ops(
     for (buf_idx, op) in ops {
         match op {
             SyncOp::Create { content, project_id, section_id, parent_id, due } => {
-                let resolved = resolve_parent_id(&parent_id, buf_idx, buffer_tasks, new_id_map);
+                let resolved = resolve_parent_id(&parent_id, buf_idx, buffer_tasks, new_id_map, summary);
                 match api::create_task(client, token, &content, &project_id,
                                        section_id.as_deref(), resolved.as_deref(),
                                        due.as_deref()) {
@@ -299,6 +313,18 @@ fn execute_ops(
                     Err(e)  => summary.errors.push(format!("Reorder: {}", e)),
                 }
             }
+            SyncOp::Move { id, content, project_id, section_id, parent_id } => {
+                let resolved_parent = resolve_parent_id(&parent_id, buf_idx, buffer_tasks, new_id_map, summary);
+                match api::move_task(
+                    client, token, &id,
+                    Some(project_id.as_str()),
+                    section_id.as_deref(),
+                    resolved_parent.as_deref(),
+                ) {
+                    Ok(())  => summary.moved += 1,
+                    Err(e)  => summary.errors.push(format!("Move '{}': {}", content, e)),
+                }
+            }
         }
     }
 }
@@ -308,6 +334,7 @@ fn resolve_parent_id(
     current_idx: usize,
     buffer_tasks: &[BufferTask],
     new_id_map: &HashMap<usize, String>,
+    summary: &mut SyncSummary,
 ) -> Option<String> {
     let pid = parent_id.as_ref()?;
     for (idx, task) in buffer_tasks.iter().enumerate() {
@@ -322,7 +349,11 @@ fn resolve_parent_id(
             }
         }
     }
-    Some(pid.clone())
+    summary.warnings.push(format!(
+        "Parent task {} not found — child will be placed at root.",
+        pid
+    ));
+    None
 }
 
 // ─── Snapshot rebuild ────────────────────────────────────────────────────────
@@ -615,5 +646,81 @@ mod tests {
         let result = rebuild_snapshot(&original, &buf, &HashMap::new());
         assert_eq!(result["t1"].content, original["t1"].content);
         assert_eq!(result["t1"].checked, original["t1"].checked);
+    }
+
+    fn bt_proj(id: Option<&str>, content: &str, project_id: &str, section_id: Option<&str>, parent_id: Option<&str>) -> BufferTask {
+        BufferTask {
+            id: id.map(|s| s.to_string()), content: content.to_string(),
+            checked: false, indent_level: 0,
+            project_id: Some(project_id.to_string()),
+            section_id: section_id.map(|s| s.to_string()),
+            parent_id: parent_id.map(|s| s.to_string()),
+            line_num: 1, due: None,
+        }
+    }
+
+    fn snap_proj(id: &str, content: &str, project_id: &str, section_id: Option<&str>, parent_id: Option<&str>) -> (String, SnapshotTask) {
+        (id.to_string(), SnapshotTask {
+            id: id.to_string(), content: content.to_string(),
+            project_id: project_id.to_string(),
+            section_id: section_id.map(|s| s.to_string()),
+            parent_id: parent_id.map(|s| s.to_string()),
+            checked: false, child_order: 0, due: None,
+        })
+    }
+
+    #[test]
+    fn detects_project_move() {
+        let snap: HashMap<String, SnapshotTask> =
+            vec![snap_proj("t1", "Task", "p1", None, None)].into_iter().collect();
+        let buf = vec![bt_proj(Some("t1"), "Task", "p2", None, None)];
+        let ops = compute_ops(&buf, &snap, &mut SyncSummary::default());
+        assert!(ops.iter().any(|(_, op)| matches!(op, SyncOp::Move { project_id, .. } if project_id == "p2")));
+    }
+
+    #[test]
+    fn detects_section_move() {
+        let snap: HashMap<String, SnapshotTask> =
+            vec![snap_proj("t1", "Task", "p1", None, None)].into_iter().collect();
+        let buf = vec![bt_proj(Some("t1"), "Task", "p1", Some("s1"), None)];
+        let ops = compute_ops(&buf, &snap, &mut SyncSummary::default());
+        assert!(ops.iter().any(|(_, op)| matches!(op, SyncOp::Move { section_id, .. } if section_id.as_deref() == Some("s1"))));
+    }
+
+    #[test]
+    fn detects_parent_move() {
+        let snap: HashMap<String, SnapshotTask> =
+            vec![snap_proj("t1", "Task", "p1", None, None)].into_iter().collect();
+        let buf = vec![bt_proj(Some("t1"), "Task", "p1", None, Some("t0"))];
+        let ops = compute_ops(&buf, &snap, &mut SyncSummary::default());
+        assert!(ops.iter().any(|(_, op)| matches!(op, SyncOp::Move { parent_id, .. } if parent_id.as_deref() == Some("t0"))));
+    }
+
+    #[test]
+    fn no_move_when_unchanged() {
+        let snap: HashMap<String, SnapshotTask> =
+            vec![snap_proj("t1", "Task", "p1", None, None)].into_iter().collect();
+        let buf = vec![bt_proj(Some("t1"), "Task", "p1", None, None)];
+        let ops = compute_ops(&buf, &snap, &mut SyncSummary::default());
+        assert!(!ops.iter().any(|(_, op)| matches!(op, SyncOp::Move { .. })));
+    }
+
+    #[test]
+    fn resolve_parent_id_returns_none_for_dangling() {
+        let buf = vec![bt(Some("t1"), "Task", false)];
+        let parent_id = Some("pX".to_string());
+        let mut summary = SyncSummary::default();
+        let result = resolve_parent_id(&parent_id, 1, &buf, &HashMap::new(), &mut summary);
+        assert!(result.is_none());
+        assert!(!summary.warnings.is_empty());
+    }
+
+    #[test]
+    fn rebuild_snapshot_applies_move() {
+        let original: HashMap<String, SnapshotTask> =
+            vec![snap_proj("t1", "Task", "p1", None, None)].into_iter().collect();
+        let buf = vec![bt_proj(Some("t1"), "Task", "p2", None, None)];
+        let result = rebuild_snapshot(&original, &buf, &HashMap::new());
+        assert_eq!(result["t1"].project_id, "p2");
     }
 }
